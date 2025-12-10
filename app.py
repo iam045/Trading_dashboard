@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import re # 引入正規表達式模組
+import re
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="私募基金戰情室", layout="wide")
-st.title("💰 交易績效戰情室 (雲端同步版 - Pro Ver 5.7)")
+st.title("💰 交易績效戰情室 (雲端同步版 - Pro Ver 5.8 終極偵錯)")
 
 # --- 2. 連線設定 ---
 @st.cache_resource(ttl=60) 
@@ -23,77 +23,81 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案。錯誤訊息：{e}"
 
-# --- 3. 資料讀取 ---
+# --- 3. 資料讀取 (暴力搜尋版) ---
 def read_daily_pnl(xls, sheet_name):
     try:
-        # 擴大搜尋範圍到前 30 行
-        df_preview = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=30)
-        header_idx = -1
-        target_keywords = ['日總計', '總計', '累計損益', '損益']
+        # 1. 擴大搜尋範圍到前 50 行
+        # header=None 代表先不設標題，把整張表當資料讀進來
+        df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=50)
         
-        for i, row in enumerate(df_preview.values):
-            if any(k in str(r) for k in target_keywords for r in row):
+        header_idx = -1
+        # 關鍵字增加空白變體
+        target_keywords = ['日總計', '總計', '累計損益', '損益', '日 總 計', '損 益']
+        
+        # 逐行掃描
+        for i, row in enumerate(df_raw.values):
+            row_str = " ".join([str(r) for r in row]) # 把整行轉成字串
+            if any(k in row_str for k in target_keywords):
                 header_idx = i
                 break
         
+        # 除錯：如果是在找 9 月份的表，印出它到底在第幾行找到標題
+        # if "09" in sheet_name or "-9" in sheet_name:
+        #     print(f"[{sheet_name}] 標題在第 {header_idx} 行")
+
         if header_idx == -1: return pd.DataFrame()
 
+        # 2. 用找到的行數當標題重新讀取
         df = pd.read_excel(xls, sheet_name=sheet_name, header=header_idx)
         
+        # 3. 欄位清洗 (把換行符號、前後空白都拿掉)
+        df.columns = df.columns.astype(str).str.replace('\n', '').str.strip()
+        
+        # 強制命名第一欄為 Date (假設第一欄永遠是日期)
         new_cols = list(df.columns)
         new_cols[0] = 'Date'
         df.columns = new_cols
         
+        # 4. 尋找損益欄位 (模糊比對)
         pnl_col = None
         for col in df.columns:
-            if '日總計' in str(col): pnl_col = col; break
+            if '日總計' in col.replace(" ", ""): pnl_col = col; break # 移除空白比對
         if not pnl_col:
             for col in df.columns:
-                if '總計' in str(col) and '累計' not in str(col): pnl_col = col; break
+                if '總計' in col and '累計' not in col: pnl_col = col; break
         if not pnl_col:
             for col in df.columns:
-                if '損益' in str(col) and '累計' not in str(col): pnl_col = col; break
+                if '損益' in col and '累計' not in col: pnl_col = col; break
         
         if 'Date' in df.columns and pnl_col:
             df = df[['Date', pnl_col]].copy()
             df = df.rename(columns={pnl_col: 'Daily_PnL'})
             
+            # 清洗數據
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-            df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'], errors='coerce')
+            # 處理千分位逗號和非數字字符
+            df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'].astype(str).str.replace(',', ''), errors='coerce')
+            
             df = df.dropna(subset=['Date', 'Daily_PnL'])
             return df
             
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 4. 繪圖邏輯 (超級模糊搜尋版) ---
+# --- 4. 繪圖邏輯 ---
 def plot_yearly_trend(xls, year):
     all_data = []
     
-    # --- 關鍵修正：建立超級標準化的名稱對照表 ---
-    # 邏輯：把所有奇怪符號 (空白, 下底線, 全形dash, 斜線, 點) 全部換成標準 Dash "-"
-    sheet_map = {}
-    for raw_name in xls.sheet_names:
-        # 1. 取代所有怪符號為 "-"
-        clean_name = re.sub(r"[ _－/.]", "-", str(raw_name))
-        sheet_map[clean_name] = raw_name
-        
-        # 除錯用：如果在 2025 年，把清洗結果印在後台
-        # if str(year) in clean_name:
-        #     print(f"原始: {raw_name} -> 清洗後: {clean_name}")
-
+    # 清洗分頁名稱對照表
+    sheet_map = {re.sub(r"[ _－/.]", "-", str(name)): name for name in xls.sheet_names}
+    
     for month in range(1, 13): 
-        # 我們預期的標準格式
-        target_v1 = f"日報表{year}-{month:02d}" # 例如 日報表2025-09
-        target_v2 = f"日報表{year}-{month}"     # 例如 日報表2025-9
+        target_v1 = f"日報表{year}-{month:02d}" 
+        target_v2 = f"日報表{year}-{month}"     
         
         real_sheet_name = None
-        
-        # 在清洗過的對照表中尋找
-        if target_v1 in sheet_map:
-            real_sheet_name = sheet_map[target_v1]
-        elif target_v2 in sheet_map:
-            real_sheet_name = sheet_map[target_v2]
+        if target_v1 in sheet_map: real_sheet_name = sheet_map[target_v1]
+        elif target_v2 in sheet_map: real_sheet_name = sheet_map[target_v2]
             
         if real_sheet_name:
             df_m = read_daily_pnl(xls, real_sheet_name)
@@ -124,7 +128,6 @@ def plot_yearly_trend(xls, year):
 
     fig = go.Figure()
 
-    # 恢復單純的藍色線條
     fig.add_trace(go.Scatter(
         x=df_year['Date'], y=df_year['Cumulative_PnL'],
         mode='lines',
@@ -145,12 +148,10 @@ def plot_yearly_trend(xls, year):
         tick_text.append(f"{m_idx}月")
         
         if m_idx == 1: continue
-        fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.3) # 0軸改回灰色虛線
+        fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
-    # 移除上方標題 (Title)
     fig.update_layout(
-        # title=...,  <-- 這裡被移除了，達成你的需求
-        margin=dict(t=10), # 把上方邊界縮小，避免留白太多
+        margin=dict(t=10),
         xaxis_title="", 
         yaxis_title="累計損益",
         hovermode="x unified", 
@@ -177,11 +178,6 @@ xls, err_msg = load_google_sheet()
 if err_msg:
     st.error("無法連線到 Google Sheet！請檢查 Secrets 設定是否正確。")
 else:
-    # --- 診斷區域 (除錯用，如果還是抓不到，請點開這個看) ---
-    with st.expander("🛠️ 點此檢查 Excel 分頁名稱 (除錯用)"):
-        st.write("程式讀到的所有分頁名稱：")
-        st.write(xls.sheet_names)
-
     # === Tab 1: 總覽 ===
     with tab1:
         if '累積總表' in xls.sheet_names:
@@ -207,6 +203,25 @@ else:
 
     # === Tab 2: 年度回顧 ===
     with tab2:
+        # --- 診斷區域：針對 2025 年 9 月 (隱藏式) ---
+        with st.expander("🕵️‍♂️ 9月資料失蹤偵探 (Debug)"):
+            st.write("正在檢查 Excel 裡的分頁名稱...")
+            found_9 = False
+            for name in xls.sheet_names:
+                if "2025" in name and ("09" in name or "-9" in name):
+                    st.write(f"✅ 找到分頁: **{name}**")
+                    found_9 = True
+                    # 嘗試讀取內容並顯示前 5 行
+                    try:
+                        df_debug = pd.read_excel(xls, sheet_name=name, header=None, nrows=10)
+                        st.write("👇 該分頁的前 10 行內容 (請檢查 '日總計' 在哪)：")
+                        st.dataframe(df_debug)
+                    except:
+                        st.write("❌ 讀取內容失敗")
+            
+            if not found_9:
+                st.error("❌ 完全找不到包含 '2025' 和 '9' 的分頁名稱！")
+
         target_years = [2025, 2024, 2023, 2022, 2021]
         
         my_bar = st.progress(0, text="正在下載雲端資料...")
