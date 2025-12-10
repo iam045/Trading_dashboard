@@ -22,60 +22,72 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案: {e}"
 
-# --- 3. 資料讀取 (暴力B計畫版) ---
+# --- 3. 資料讀取 (三階段篩選版) ---
 def read_daily_pnl(xls, sheet_name):
     try:
         # 先把整張表讀進來 (不設標題)
         df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=50)
         
-        # === 策略 A: 關鍵字智慧搜尋 (針對 2021-2024) ===
-        target_keywords = ['日總計', '總計', '累計損益', '損益']
         header_row = -1
         pnl_col_idx = -1
-        
-        for r in range(len(df_raw)):
-            for c in range(len(df_raw.columns)):
-                val = str(df_raw.iloc[r, c]).replace(" ", "")
-                if any(k in val for k in target_keywords):
-                    header_row = r
-                    pnl_col_idx = c
-                    break
-            if header_row != -1: break
-            
-        if header_row != -1:
-            # 找到關鍵字，依照找到的位置讀取
-            # 資料在標題的下一行開始
-            df_smart = df_raw.iloc[header_row+1:, [0, pnl_col_idx]].copy()
-            df_smart.columns = ['Date', 'Daily_PnL']
-            
-            # 測試一下是否有資料，如果有就回傳
-            df_smart['Daily_PnL'] = pd.to_numeric(df_smart['Daily_PnL'].astype(str).str.replace(',', ''), errors='coerce')
-            if df_smart['Daily_PnL'].count() > 0:
-                df_smart['Date'] = pd.to_datetime(df_smart['Date'], errors='coerce')
-                return df_smart.dropna(subset=['Date', 'Daily_PnL'])
+        found_mode = ""
 
-        # === 策略 B: 暴力指定 H7 (針對 2025-09 這種頑強份子) ===
-        # 如果上面失敗了 (回傳 0 筆)，或是根本沒找到關鍵字
-        # 直接抓 A 欄 (Col 0) 和 H 欄 (Col 7)，從第 7 列 (Row 6) 開始
+        # === 第一階段：優先尋找 '日總計' ===
+        for r in range(len(df_raw)):
+            row_values = [str(v).replace(" ", "") for v in df_raw.iloc[r]]
+            if "日總計" in row_values:
+                header_row = r
+                # 找出 '日總計' 在哪一欄
+                for c, val in enumerate(row_values):
+                    if "日總計" in val:
+                        pnl_col_idx = c
+                        found_mode = "日總計"
+                        break
+                break
         
-        # 確保 DataFrame 夠大
-        if df_raw.shape[1] > 7 and df_raw.shape[0] > 6:
-            df_force = df_raw.iloc[6:, [0, 7]].copy() # 從 Row 6 (第7列) 開始抓 A 和 H
+        # === 第二階段：如果沒找到，尋找 '總計' (排除 '累計') ===
+        if header_row == -1:
+            for r in range(len(df_raw)):
+                row_values = [str(v).replace(" ", "") for v in df_raw.iloc[r]]
+                # 檢查這一行有沒有單純的 '總計'
+                for c, val in enumerate(row_values):
+                    if "總計" in val and "累計" not in val and "日" not in val:
+                        header_row = r
+                        pnl_col_idx = c
+                        found_mode = "總計"
+                        break
+                if header_row != -1: break
+
+        # === 提取資料 ===
+        if header_row != -1 and pnl_col_idx != -1:
+            # 依照找到的標題位置讀取
+            df = df_raw.iloc[header_row+1:, [0, pnl_col_idx]].copy()
+            df.columns = ['Date', 'Daily_PnL']
+            
+            # 清洗並驗證
+            df_clean = clean_data(df)
+            if not df_clean.empty:
+                return df_clean
+
+        # === 第三階段：暴力指定 H7 (H欄=Index 7, 第7列=Index 6) ===
+        # 如果上面都失敗，或讀出來沒資料，直接抓固定位置
+        if df_raw.shape[0] > 6 and df_raw.shape[1] > 7:
+            df_force = df_raw.iloc[6:, [0, 7]].copy()
             df_force.columns = ['Date', 'Daily_PnL']
-            
-            # 清洗
-            df_force['Date'] = pd.to_datetime(df_force['Date'], errors='coerce')
-            # 強力去除非數字字元
-            df_force['Daily_PnL'] = pd.to_numeric(df_force['Daily_PnL'].astype(str).str.replace(',', '').str.strip(), errors='coerce')
-            
-            # 只要抓得到數字，就回傳
-            df_force = df_force.dropna(subset=['Date', 'Daily_PnL'])
-            if not df_force.empty:
-                return df_force
+            return clean_data(df_force)
 
         return pd.DataFrame()
 
     except: return pd.DataFrame()
+
+def clean_data(df):
+    """共用的資料清洗函式"""
+    # 轉日期
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    # 轉數字 (去逗號、去空格)
+    df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'].astype(str).str.replace(',', '').str.strip(), errors='coerce')
+    # 移除無效列
+    return df.dropna(subset=['Date', 'Daily_PnL'])
 
 # --- 4. 繪圖邏輯 ---
 def plot_yearly_trend(xls, year):
@@ -141,11 +153,9 @@ def plot_yearly_trend(xls, year):
         if m_idx == 1: continue
         fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
-    title_suffix = " <span style='color:red; font-size: 0.8em;'>(記錄較不完整)</span>" if year in [2021, 2022] else ""
-
     fig.update_layout(
-        title=f"<b>{year} 年度損益走勢</b>{title_suffix} (總獲利: ${latest_pnl:,.0f})",
-        margin=dict(t=40, b=10),
+        # 這裡已經移除了 title 參數，達成你的要求
+        margin=dict(t=20, b=10), # 上邊距留一點空間給年份標題(因為圖表標題拿掉了)
         xaxis_title="", 
         yaxis_title="累計損益",
         hovermode="x unified", 
@@ -199,7 +209,7 @@ else:
             if result:
                 fig, final, high, low, m_stats = result
                 
-                # 標題
+                # 標題 (整合備註)
                 st.markdown(f"### {year} 年" + (" (記錄較不完整)" if year in [2021, 2022] else ""))
                 
                 c1, c2, c3 = st.columns(3)
