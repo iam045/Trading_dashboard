@@ -61,7 +61,7 @@ def clean_data(df):
     df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'].astype(str).str.replace(',', '').str.strip(), errors='coerce')
     return df.dropna(subset=['Date', 'Daily_PnL'])
 
-# --- 4. 繪圖邏輯 (斷尾修正版) ---
+# --- 4. 繪圖邏輯 (時間結界修正版) ---
 def plot_yearly_trend(xls, year):
     all_data = []
     sheet_map = {re.sub(r"[ _－/.-]", "", str(name)): name for name in xls.sheet_names}
@@ -80,17 +80,24 @@ def plot_yearly_trend(xls, year):
     
     if df_year.empty: return None
 
-    # --- 關鍵修正：只保留到最後一筆有效交易日 ---
-    df_year = df_year.sort_values('Date')
+    # --- 🔥 關鍵修正：砍掉未來的資料 ---
+    # 取得今天的日期 (去掉時間，只留年月日)
+    today = pd.Timestamp.now().normalize()
     
-    # 計算累計損益
+    # 過濾：只保留「日期 <= 今天」的資料
+    # 這樣就算 Excel 裡有預填明天的 0，也會被砍掉
+    df_year = df_year[df_year['Date'] <= today]
+
+    if df_year.empty: return None # 如果過濾完沒資料了(例如全是未來的?)
+
+    df_year = df_year.sort_values('Date')
     df_year['Cumulative_PnL'] = df_year['Daily_PnL'].cumsum()
     
     latest_pnl = df_year['Cumulative_PnL'].iloc[-1]
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
     
-    # 月統計 (包含未發生的月份顯示 ---)
+    # 月統計
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
     monthly_stats_display = {}
     for m in range(1, 13):
@@ -99,7 +106,7 @@ def plot_yearly_trend(xls, year):
 
     fig = go.Figure()
 
-    # 繪製主線 (數據只到最後一天，所以線會自動停在那裡)
+    # 繪製主線
     fig.add_trace(go.Scatter(
         x=df_year['Date'], y=df_year['Cumulative_PnL'],
         mode='lines',
@@ -108,27 +115,17 @@ def plot_yearly_trend(xls, year):
         fillcolor='rgba(31, 119, 180, 0.1)'
     ))
 
-    # X 軸設定：強制顯示 1月~12月 (即使還沒到)
-    # 這樣你會看到線圖停在中間，右邊留白，符合你的需求
-    
-    # 建立每個月的起始日列表 (為了畫虛線和標籤)
+    # X 軸刻度
     tick_vals = [pd.Timestamp(f"{year}-{m:02d}-01") for m in range(1, 13)]
     tick_text = [f"{m}月" for m in range(1, 13)]
     
-    # 畫月份分隔線
     for val in tick_vals:
         if val.month == 1: continue
         fig.add_vline(x=val, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
-    # 為了讓圖表右邊不要太擠，我們可以強制把 X 軸範圍設為 全年
-    # 這樣線圖就會停在今天，右邊空出未來的日子
-    fig.update_xaxes(
-        range=[f"{year}-01-01", f"{year}-12-31"], # 強制鎖定範圍
-        tickmode='array', tickvals=tick_vals, ticktext=tick_text
-    )
-
     title_suffix = " <span style='color:red; font-size: 0.8em;'>(記錄較不完整)</span>" if year in [2021, 2022] else ""
 
+    # 設定 X 軸範圍為「全年」，確保右邊留白
     fig.update_layout(
         title=f"<b>{year} 年度損益走勢</b>{title_suffix} (總獲利: ${latest_pnl:,.0f})",
         margin=dict(t=40, b=10),
@@ -136,7 +133,11 @@ def plot_yearly_trend(xls, year):
         yaxis_title="累計損益",
         hovermode="x unified", 
         height=450,
-        showlegend=False
+        showlegend=False,
+        xaxis=dict(
+            range=[f"{year}-01-01", f"{year}-12-31"], # 強制鎖定全年範圍
+            tickmode='array', tickvals=tick_vals, ticktext=tick_text
+        )
     )
     
     return fig, latest_pnl, max_pnl, min_pnl, monthly_stats_display
