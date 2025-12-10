@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np # 新增 numpy 用於數學運算
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="私募基金戰情室", layout="wide")
-st.title("💰 交易績效戰情室 (雲端同步版)")
+st.title("💰 交易績效戰情室 (雲端同步版 - Pro Ver 5.5)")
 
-# --- 2. 連線設定 (讀取 Secrets) ---
+# --- 2. 連線設定 ---
 @st.cache_resource(ttl=60) 
 def load_google_sheet():
     try:
@@ -22,14 +23,12 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案。錯誤訊息：{e}"
 
-# --- 3. 資料讀取輔助函式 (修正版) ---
+# --- 3. 資料讀取 (相容性增強版) ---
 def read_daily_pnl(xls, sheet_name):
     try:
         # 讀前 15 行找標題
         df_preview = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=15)
         header_idx = -1
-        
-        # 新增 '總計' 到關鍵字清單
         target_keywords = ['日總計', '總計', '累計損益', '損益']
         
         for i, row in enumerate(df_preview.values):
@@ -46,19 +45,13 @@ def read_daily_pnl(xls, sheet_name):
         new_cols[0] = 'Date'
         df.columns = new_cols
         
-        # --- 關鍵修正：多重欄位偵測邏輯 ---
+        # 尋找損益欄位
         pnl_col = None
-        
-        # Priority 1: 最標準的 '日總計'
         for col in df.columns:
             if '日總計' in str(col): pnl_col = col; break
-            
-        # Priority 2: 舊格式 '總計' (但要小心不要抓到 '累計')
         if not pnl_col:
             for col in df.columns:
                 if '總計' in str(col) and '累計' not in str(col): pnl_col = col; break
-        
-        # Priority 3: 通用的 '損益' (也要排除 '累計')
         if not pnl_col:
             for col in df.columns:
                 if '損益' in str(col) and '累計' not in str(col): pnl_col = col; break
@@ -67,7 +60,6 @@ def read_daily_pnl(xls, sheet_name):
             df = df[['Date', pnl_col]].copy()
             df = df.rename(columns={pnl_col: 'Daily_PnL'})
             
-            # 清洗數據
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'], errors='coerce')
             df = df.dropna(subset=['Date', 'Daily_PnL'])
@@ -76,13 +68,24 @@ def read_daily_pnl(xls, sheet_name):
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 4. 繪圖邏輯 ---
+# --- 4. 繪圖邏輯 (紅綠分色 + 月份修正) ---
 def plot_yearly_trend(xls, year):
     all_data = []
-    # 掃描分頁
+    
+    # 修正：同時搜尋 "09" 和 "9" 兩種格式
     for month in range(1, 13): 
-        sheet_name = f"日報表{year}-{month:02d}"
-        if sheet_name in xls.sheet_names:
+        # 嘗試格式 1: 日報表2025-09
+        name_v1 = f"日報表{year}-{month:02d}"
+        # 嘗試格式 2: 日報表2025-9
+        name_v2 = f"日報表{year}-{month}"
+        
+        sheet_name = None
+        if name_v1 in xls.sheet_names:
+            sheet_name = name_v1
+        elif name_v2 in xls.sheet_names:
+            sheet_name = name_v2
+            
+        if sheet_name:
             df_m = read_daily_pnl(xls, sheet_name)
             if not df_m.empty: all_data.append(df_m)
     
@@ -90,8 +93,6 @@ def plot_yearly_trend(xls, year):
 
     # 合併數據
     df_year = pd.concat(all_data)
-    
-    # 年份過濾
     df_year = df_year[df_year['Date'].dt.year == year]
     
     if df_year.empty: return None
@@ -103,37 +104,84 @@ def plot_yearly_trend(xls, year):
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
     
-    # 計算月損益
+    # 計算月損益 (表格用)
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
     monthly_stats_display = {}
     for m in range(1, 13):
         col_name = f"{m}月"
         if m in monthly_sums.index:
-            val = monthly_sums[m]
-            monthly_stats_display[col_name] = f"${val:,.0f}"
+            monthly_stats_display[col_name] = f"${monthly_sums[m]:,.0f}"
         else:
             monthly_stats_display[col_name] = "---"
 
-    # 繪圖
+    # --- 🔥 紅綠分色繪圖邏輯 ---
     fig = go.Figure()
+
+    # 我們需要畫兩條線：
+    # 1. 正數線 (只顯示 >0 的部分，<0 補 0) -> 紅色
+    # 2. 負數線 (只顯示 <0 的部分，>0 補 0) -> 綠色
+    # 注意：這樣做在交界處會有一點點斷層，但在日報表這種密度下通常看不出來，或是用 fill 覆蓋
+    
+    # 為了讓線條連續，我們畫一條主線(透明)，然後用 fill 來上色
+    # 更好的做法：分段填色
+    
+    # 準備數據
+    x_data = df_year['Date']
+    y_data = df_year['Cumulative_PnL']
+    
+    # 製作 "正數區域" (小於 0 的變 0)
+    y_positive = y_data.clip(lower=0)
+    # 製作 "負數區域" (大於 0 的變 0)
+    y_negative = y_data.clip(upper=0)
+    
+    # 1. 畫紅色區域 (0軸以上)
     fig.add_trace(go.Scatter(
-        x=df_year['Date'], y=df_year['Cumulative_PnL'],
-        mode='lines', name=f'{year}損益',
-        line=dict(color='#1f77b4', width=2),
-        fill='tozeroy', fillcolor='rgba(31, 119, 180, 0.1)'
+        x=x_data, y=y_positive,
+        mode='lines',
+        name='獲利',
+        line=dict(color='#ff4d4d', width=2), # 紅色線
+        fill='tozeroy', 
+        fillcolor='rgba(255, 77, 77, 0.1)' # 紅色半透明填充
     ))
     
-    # 畫月份線
+    # 2. 畫綠色區域 (0軸以下)
+    fig.add_trace(go.Scatter(
+        x=x_data, y=y_negative,
+        mode='lines',
+        name='虧損',
+        line=dict(color='#00cc66', width=2), # 綠色線
+        fill='tozeroy', 
+        fillcolor='rgba(0, 204, 102, 0.1)' # 綠色半透明填充
+    ))
+
+    # 畫月份分隔線
     df_year['Month'] = df_year['Date'].dt.month
     month_starts = df_year.groupby('Month')['Date'].min()
+    
+    # 收集 X 軸刻度 (用於顯示中文月份)
+    tick_vals = []
+    tick_text = []
+    
     for m_idx, start_date in month_starts.items():
+        tick_vals.append(start_date)
+        tick_text.append(f"{m_idx}月") # 轉成中文
+        
         if m_idx == 1: continue
-        fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
+        fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
     fig.update_layout(
         title=f"<b>{year} 年度損益走勢</b> (總獲利: ${latest_pnl:,.0f})",
-        xaxis_title="日期", yaxis_title="累計損益",
-        hovermode="x unified", height=500, xaxis=dict(dtick="M1", tickformat="%b") 
+        xaxis_title="", 
+        yaxis_title="累計損益",
+        hovermode="x unified", 
+        height=500,
+        showlegend=False, # 隱藏圖例讓畫面乾淨
+        # 自訂 X 軸刻度顯示
+        xaxis=dict(
+            tickmode='array',
+            tickvals=tick_vals,
+            ticktext=tick_text
+        )
     )
     
     return fig, latest_pnl, max_pnl, min_pnl, monthly_stats_display
@@ -186,7 +234,7 @@ else:
                 
                 st.markdown(f"### {year} 年")
                 k1, k2, k3 = st.columns(3)
-                k1.metric(f"{year} 總損益", f"${final:,.0f}")
+                k1.metric(f"{year} 總損益", f"${final:,.0f}", delta_color="off") 
                 k2.metric("高點", f"${high:,.0f}")
                 k3.metric("低點", f"${low:,.0f}")
                 
