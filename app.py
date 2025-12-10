@@ -8,15 +8,16 @@ st.set_page_config(page_title="私募基金戰情室", layout="wide")
 st.title("💰 交易績效戰情室 (雲端同步版)")
 
 # --- 2. 連線設定 (讀取 Secrets) ---
-@st.cache_resource(ttl=60) # 設定 60 秒快取，避免頻繁下載
+@st.cache_resource(ttl=60) 
 def load_google_sheet():
     try:
         # 從 Secrets 讀取 ID
+        if "google_sheet_id" not in st.secrets:
+            return None, "請在 Streamlit Secrets 設定 'google_sheet_id'"
+            
         sheet_id = st.secrets["google_sheet_id"]
-        # 組合出「下載 Excel」的網址
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
         
-        # 直接從網址讀取 Excel (神奇的一步)
         xls = pd.ExcelFile(url, engine='openpyxl')
         return xls, None
     except Exception as e:
@@ -31,14 +32,12 @@ def read_daily_pnl(xls, sheet_name):
         target_keywords = ['日總計', '累計損益', '損益']
         
         for i, row in enumerate(df_preview.values):
-            # 只要包含關鍵字之一
             if any(k in str(r) for k in target_keywords for r in row):
                 header_idx = i
                 break
         
         if header_idx == -1: return pd.DataFrame()
 
-        # 讀取資料
         df = pd.read_excel(xls, sheet_name=sheet_name, header=header_idx)
         
         # 強制命名第一欄為 Date
@@ -67,7 +66,7 @@ def read_daily_pnl(xls, sheet_name):
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 4. 繪圖邏輯 ---
+# --- 4. 繪圖邏輯 (新增防呆過濾) ---
 def plot_yearly_trend(xls, year):
     all_data = []
     # 掃描分頁
@@ -79,8 +78,15 @@ def plot_yearly_trend(xls, year):
     
     if not all_data: return None 
 
-    # 合併與計算
-    df_year = pd.concat(all_data).sort_values('Date')
+    # 合併數據
+    df_year = pd.concat(all_data)
+    
+    # 🔥 關鍵修正：只保留該年份的資料 (過濾掉 Excel 裡複製貼上錯誤的舊年份)
+    df_year = df_year[df_year['Date'].dt.year == year]
+    
+    if df_year.empty: return None
+
+    df_year = df_year.sort_values('Date')
     df_year['Cumulative_PnL'] = df_year['Daily_PnL'].cumsum()
     
     latest_pnl = df_year['Cumulative_PnL'].iloc[-1]
