@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import re
 import time
+import numpy as np # 需要 numpy 處理 NaN
 from datetime import datetime
 
 # --- 1. 頁面設定 ---
@@ -22,12 +23,12 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案: {e}"
 
-# --- 3. 資料讀取 (雙重保險版) ---
+# --- 3. 資料讀取 ---
 def read_daily_pnl(xls, sheet_name):
     try:
         df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=50)
         
-        # 策略 A: 關鍵字搜尋
+        # 策略 A
         header_row = -1
         pnl_col_idx = -1
         target_keywords = ['日總計', '總計', '累計損益', '損益']
@@ -47,7 +48,7 @@ def read_daily_pnl(xls, sheet_name):
             df.columns = ['Date', 'Daily_PnL']
             if clean_data(df).empty == False: return clean_data(df)
 
-        # 策略 B: 暴力指定 H7
+        # 策略 B
         if df_raw.shape[0] > 6 and df_raw.shape[1] > 7:
             df_force = df_raw.iloc[6:, [0, 7]].copy()
             df_force.columns = ['Date', 'Daily_PnL']
@@ -61,7 +62,53 @@ def clean_data(df):
     df['Daily_PnL'] = pd.to_numeric(df['Daily_PnL'].astype(str).str.replace(',', '').str.strip(), errors='coerce')
     return df.dropna(subset=['Date', 'Daily_PnL'])
 
-# --- 4. 繪圖邏輯 (紅綠分色 + 移除標題) ---
+# --- 關鍵輔助函式：計算 0 軸交點 (Interpolation) ---
+def insert_zero_crossings(df):
+    """
+    在正負數切換的地方，插入 '0' 的點，讓繪圖完美銜接。
+    """
+    if df.empty: return df
+    
+    # 確保依照時間排序
+    df = df.sort_values('Date').reset_index(drop=True)
+    
+    new_rows = []
+    
+    # 遍歷每一筆資料
+    for i in range(len(df) - 1):
+        curr_row = df.iloc[i]
+        next_row = df.iloc[i+1]
+        
+        y1 = curr_row['Cumulative_PnL']
+        y2 = next_row['Cumulative_PnL']
+        
+        # 如果符號不同 (一正一負)，代表有穿越 0 軸
+        if (y1 > 0 and y2 < 0) or (y1 < 0 and y2 > 0):
+            # 計算穿越的時間點 (線性插值)
+            # x = x1 + (0 - y1) * (x2 - x1) / (y2 - y1)
+            
+            t1 = curr_row['Date'].timestamp()
+            t2 = next_row['Date'].timestamp()
+            
+            zero_t = t1 + (0 - y1) * (t2 - t1) / (y2 - y1)
+            zero_date = pd.Timestamp.fromtimestamp(zero_t)
+            
+            # 建立一個新的 0 點資料
+            new_rows.append({
+                'Date': zero_date,
+                'Daily_PnL': 0,
+                'Cumulative_PnL': 0
+            })
+            
+    # 如果有新點，合併並重新排序
+    if new_rows:
+        df_new = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+        df_new = df_new.sort_values('Date').reset_index(drop=True)
+        return df_new
+    
+    return df
+
+# --- 4. 繪圖邏輯 (插值修正版) ---
 def plot_yearly_trend(xls, year):
     all_data = []
     sheet_map = {re.sub(r"[ _－/.-]", "", str(name)): name for name in xls.sheet_names}
@@ -78,7 +125,7 @@ def plot_yearly_trend(xls, year):
     df_year = pd.concat(all_data)
     df_year = df_year[df_year['Date'].dt.year == year]
     
-    # 砍掉未來的資料
+    # 時間結界
     today = pd.Timestamp.now().normalize()
     df_year = df_year[df_year['Date'] <= today]
 
@@ -87,32 +134,32 @@ def plot_yearly_trend(xls, year):
     df_year = df_year.sort_values('Date')
     df_year['Cumulative_PnL'] = df_year['Daily_PnL'].cumsum()
     
+    # 統計數據 (用原始數據算，才不會被插值點影響)
     latest_pnl = df_year['Cumulative_PnL'].iloc[-1]
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
-    
-    # 月統計
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
     monthly_stats_display = {}
     for m in range(1, 13):
         val = monthly_sums.get(m, None)
         monthly_stats_display[f"{m}月"] = f"${val:,.0f}" if val is not None else "---"
 
-    # --- 🔥 紅綠分色邏輯 ---
+    # --- 🔥 執行插值運算 ---
+    # 這一步會幫你在轉折處補上 (Date_Zero, 0) 的點
+    df_plot = insert_zero_crossings(df_year)
+
+    # 準備繪圖數據：將不該顯示的部分設為 None (隱形)
+    # y_pos: 負數變 NaN
+    y_pos = df_plot['Cumulative_PnL'].apply(lambda x: x if x >= 0 else None)
+    # y_neg: 正數變 NaN
+    y_neg = df_plot['Cumulative_PnL'].apply(lambda x: x if x <= 0 else None)
+
     fig = go.Figure()
-    
-    # 準備數據
-    x_data = df_year['Date']
-    y_data = df_year['Cumulative_PnL']
-    
-    # 拆解成正數與負數部分
-    # clip(lower=0) 把負數變 0 -> 畫紅色
-    # clip(upper=0) 把正數變 0 -> 畫綠色
-    
+
     # 1. 畫紅色區域 (獲利)
     fig.add_trace(go.Scatter(
-        x=x_data, 
-        y=y_data.clip(lower=0),
+        x=df_plot['Date'], 
+        y=y_pos,
         mode='lines',
         name='獲利',
         line=dict(color='#ff4d4d', width=2), # 紅色
@@ -122,8 +169,8 @@ def plot_yearly_trend(xls, year):
     
     # 2. 畫綠色區域 (虧損)
     fig.add_trace(go.Scatter(
-        x=x_data, 
-        y=y_data.clip(upper=0),
+        x=df_plot['Date'], 
+        y=y_neg,
         mode='lines',
         name='虧損',
         line=dict(color='#00cc66', width=2), # 綠色
@@ -139,15 +186,16 @@ def plot_yearly_trend(xls, year):
         if val.month == 1: continue
         fig.add_vline(x=val, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
-    # --- 關鍵修正：移除 Title，調整 Margin ---
+    title_suffix = " <span style='color:red; font-size: 0.8em;'>(記錄較不完整)</span>" if year in [2021, 2022] else ""
+
     fig.update_layout(
-        # title=...,  <-- 已移除
-        margin=dict(t=10, b=10, l=10, r=10), # 收緊邊距
+        title=f"<b>{year} 年度損益走勢</b>{title_suffix} (總獲利: ${latest_pnl:,.0f})",
+        margin=dict(t=40, b=10),
         xaxis_title="", 
         yaxis_title="累計損益",
         hovermode="x unified", 
         height=450,
-        showlegend=False, # 不顯示圖例
+        showlegend=False,
         xaxis=dict(
             range=[f"{year}-01-01", f"{year}-12-31"],
             tickmode='array', tickvals=tick_vals, ticktext=tick_text
@@ -193,9 +241,8 @@ else:
             result = plot_yearly_trend(xls, year)
             if result:
                 fig, final, high, low, m_stats = result
-                
-                # 標題 (整合備註)
-                st.markdown(f"### {year} 年" + (" (記錄較不完整)" if year in [2021, 2022] else ""))
+                # 移除多餘的重複標題顯示 (st.markdown)
+                # st.markdown(f"### {year} 年...") <- 這行刪掉，因為圖表裡已經有了
                 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("總損益", f"${final:,.0f}") 
