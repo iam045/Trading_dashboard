@@ -2,11 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import numpy as np # 新增 numpy 用於數學運算
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="私募基金戰情室", layout="wide")
-st.title("💰 交易績效戰情室 (雲端同步版 - Pro Ver 5.5)")
+st.title("💰 交易績效戰情室 (雲端同步版 - Pro Ver 5.6)")
 
 # --- 2. 連線設定 ---
 @st.cache_resource(ttl=60) 
@@ -23,11 +22,11 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案。錯誤訊息：{e}"
 
-# --- 3. 資料讀取 (相容性增強版) ---
+# --- 3. 資料讀取 (增強搜尋版) ---
 def read_daily_pnl(xls, sheet_name):
     try:
-        # 讀前 15 行找標題
-        df_preview = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=15)
+        # 擴大搜尋範圍到前 30 行 (以免標題太下面)
+        df_preview = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=30)
         header_idx = -1
         target_keywords = ['日總計', '總計', '累計損益', '損益']
         
@@ -68,25 +67,27 @@ def read_daily_pnl(xls, sheet_name):
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 4. 繪圖邏輯 (紅綠分色 + 月份修正) ---
+# --- 4. 繪圖邏輯 (還原藍線 + 強力搜尋分頁) ---
 def plot_yearly_trend(xls, year):
     all_data = []
     
-    # 修正：同時搜尋 "09" 和 "9" 兩種格式
+    # 建立分頁名稱對照表 (把所有分頁名稱的空白拿掉，做成乾淨的對照表)
+    # 格式: {'日報表2025-09': '日 報 表 2025 - 09', ...}
+    clean_sheet_map = {name.replace(" ", ""): name for name in xls.sheet_names}
+    
     for month in range(1, 13): 
-        # 嘗試格式 1: 日報表2025-09
-        name_v1 = f"日報表{year}-{month:02d}"
-        # 嘗試格式 2: 日報表2025-9
-        name_v2 = f"日報表{year}-{month}"
+        # 我們要找的目標名稱 (無空白標準版)
+        target_v1 = f"日報表{year}-{month:02d}" # 09
+        target_v2 = f"日報表{year}-{month}"     # 9
         
-        sheet_name = None
-        if name_v1 in xls.sheet_names:
-            sheet_name = name_v1
-        elif name_v2 in xls.sheet_names:
-            sheet_name = name_v2
+        real_sheet_name = None
+        if target_v1 in clean_sheet_map:
+            real_sheet_name = clean_sheet_map[target_v1]
+        elif target_v2 in clean_sheet_map:
+            real_sheet_name = clean_sheet_map[target_v2]
             
-        if sheet_name:
-            df_m = read_daily_pnl(xls, sheet_name)
+        if real_sheet_name:
+            df_m = read_daily_pnl(xls, real_sheet_name)
             if not df_m.empty: all_data.append(df_m)
     
     if not all_data: return None 
@@ -104,7 +105,7 @@ def plot_yearly_trend(xls, year):
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
     
-    # 計算月損益 (表格用)
+    # 計算月損益
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
     monthly_stats_display = {}
     for m in range(1, 13):
@@ -114,69 +115,45 @@ def plot_yearly_trend(xls, year):
         else:
             monthly_stats_display[col_name] = "---"
 
-    # --- 🔥 紅綠分色繪圖邏輯 ---
+    # --- 繪圖 (回歸經典藍色) ---
     fig = go.Figure()
 
-    # 我們需要畫兩條線：
-    # 1. 正數線 (只顯示 >0 的部分，<0 補 0) -> 紅色
-    # 2. 負數線 (只顯示 <0 的部分，>0 補 0) -> 綠色
-    # 注意：這樣做在交界處會有一點點斷層，但在日報表這種密度下通常看不出來，或是用 fill 覆蓋
-    
-    # 為了讓線條連續，我們畫一條主線(透明)，然後用 fill 來上色
-    # 更好的做法：分段填色
-    
-    # 準備數據
-    x_data = df_year['Date']
-    y_data = df_year['Cumulative_PnL']
-    
-    # 製作 "正數區域" (小於 0 的變 0)
-    y_positive = y_data.clip(lower=0)
-    # 製作 "負數區域" (大於 0 的變 0)
-    y_negative = y_data.clip(upper=0)
-    
-    # 1. 畫紅色區域 (0軸以上)
     fig.add_trace(go.Scatter(
-        x=x_data, y=y_positive,
+        x=df_year['Date'], y=df_year['Cumulative_PnL'],
         mode='lines',
-        name='獲利',
-        line=dict(color='#ff4d4d', width=2), # 紅色線
+        name=f'{year}損益',
+        line=dict(color='#1f77b4', width=2), # 經典藍
         fill='tozeroy', 
-        fillcolor='rgba(255, 77, 77, 0.1)' # 紅色半透明填充
-    ))
-    
-    # 2. 畫綠色區域 (0軸以下)
-    fig.add_trace(go.Scatter(
-        x=x_data, y=y_negative,
-        mode='lines',
-        name='虧損',
-        line=dict(color='#00cc66', width=2), # 綠色線
-        fill='tozeroy', 
-        fillcolor='rgba(0, 204, 102, 0.1)' # 綠色半透明填充
+        fillcolor='rgba(31, 119, 180, 0.1)' # 淡淡的藍色背景
     ))
 
     # 畫月份分隔線
     df_year['Month'] = df_year['Date'].dt.month
     month_starts = df_year.groupby('Month')['Date'].min()
     
-    # 收集 X 軸刻度 (用於顯示中文月份)
+    # 準備 X 軸刻度 (中文月份)
     tick_vals = []
     tick_text = []
     
     for m_idx, start_date in month_starts.items():
         tick_vals.append(start_date)
-        tick_text.append(f"{m_idx}月") # 轉成中文
+        tick_text.append(f"{m_idx}月")
         
         if m_idx == 1: continue
         fig.add_vline(x=start_date, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
+    # 處理標題後綴
+    title_suffix = ""
+    if year in [2021, 2022]:
+        title_suffix = " <span style='color:red; font-size: 0.8em;'>(記錄較不完整)</span>"
+
     fig.update_layout(
-        title=f"<b>{year} 年度損益走勢</b> (總獲利: ${latest_pnl:,.0f})",
+        title=f"<b>{year} 年度損益走勢</b>{title_suffix} (總獲利: ${latest_pnl:,.0f})",
         xaxis_title="", 
         yaxis_title="累計損益",
         hovermode="x unified", 
         height=500,
-        showlegend=False, # 隱藏圖例讓畫面乾淨
-        # 自訂 X 軸刻度顯示
+        showlegend=False,
         xaxis=dict(
             tickmode='array',
             tickvals=tick_vals,
@@ -232,7 +209,10 @@ else:
             if result:
                 fig, final, high, low, m_stats = result
                 
-                st.markdown(f"### {year} 年")
+                # 判斷是否加備註文字
+                title_extra = " (記錄較不完整)" if year in [2021, 2022] else ""
+                st.markdown(f"### {year} 年{title_extra}")
+                
                 k1, k2, k3 = st.columns(3)
                 k1.metric(f"{year} 總損益", f"${final:,.0f}", delta_color="off") 
                 k2.metric("高點", f"${high:,.0f}")
