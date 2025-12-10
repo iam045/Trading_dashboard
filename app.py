@@ -22,13 +22,15 @@ def load_google_sheet():
     except Exception as e:
         return None, f"無法讀取雲端檔案。錯誤訊息：{e}"
 
-# --- 3. 資料讀取輔助函式 ---
+# --- 3. 資料讀取輔助函式 (修正版) ---
 def read_daily_pnl(xls, sheet_name):
     try:
         # 讀前 15 行找標題
         df_preview = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=15)
         header_idx = -1
-        target_keywords = ['日總計', '累計損益', '損益']
+        
+        # 新增 '總計' 到關鍵字清單
+        target_keywords = ['日總計', '總計', '累計損益', '損益']
         
         for i, row in enumerate(df_preview.values):
             if any(k in str(r) for k in target_keywords for r in row):
@@ -44,10 +46,19 @@ def read_daily_pnl(xls, sheet_name):
         new_cols[0] = 'Date'
         df.columns = new_cols
         
-        # 尋找損益欄位
+        # --- 關鍵修正：多重欄位偵測邏輯 ---
         pnl_col = None
+        
+        # Priority 1: 最標準的 '日總計'
         for col in df.columns:
             if '日總計' in str(col): pnl_col = col; break
+            
+        # Priority 2: 舊格式 '總計' (但要小心不要抓到 '累計')
+        if not pnl_col:
+            for col in df.columns:
+                if '總計' in str(col) and '累計' not in str(col): pnl_col = col; break
+        
+        # Priority 3: 通用的 '損益' (也要排除 '累計')
         if not pnl_col:
             for col in df.columns:
                 if '損益' in str(col) and '累計' not in str(col): pnl_col = col; break
@@ -65,7 +76,7 @@ def read_daily_pnl(xls, sheet_name):
         return pd.DataFrame()
     except: return pd.DataFrame()
 
-# --- 4. 繪圖邏輯 (新增月統計功能) ---
+# --- 4. 繪圖邏輯 ---
 def plot_yearly_trend(xls, year):
     all_data = []
     # 掃描分頁
@@ -80,7 +91,7 @@ def plot_yearly_trend(xls, year):
     # 合併數據
     df_year = pd.concat(all_data)
     
-    # 年份過濾 (修正 2023 重複問題)
+    # 年份過濾
     df_year = df_year[df_year['Date'].dt.year == year]
     
     if df_year.empty: return None
@@ -88,25 +99,20 @@ def plot_yearly_trend(xls, year):
     df_year = df_year.sort_values('Date')
     df_year['Cumulative_PnL'] = df_year['Daily_PnL'].cumsum()
     
-    # 準備圖表數據
     latest_pnl = df_year['Cumulative_PnL'].iloc[-1]
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
     
-    # --- 新增：計算每月總損益 ---
-    # 使用 groupby 依照月份加總 Daily_PnL
+    # 計算月損益
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
-    
-    # 建立顯示用的字典 (1月~12月)
     monthly_stats_display = {}
     for m in range(1, 13):
         col_name = f"{m}月"
         if m in monthly_sums.index:
             val = monthly_sums[m]
-            # 格式化金額：正數亮紅，負數亮綠 (或只顯示金額) -> 這裡先純顯示金額比較整齊
             monthly_stats_display[col_name] = f"${val:,.0f}"
         else:
-            monthly_stats_display[col_name] = "---" # 未來月份顯示橫線
+            monthly_stats_display[col_name] = "---"
 
     # 繪圖
     fig = go.Figure()
@@ -148,7 +154,6 @@ else:
     with tab1:
         if '累積總表' in xls.sheet_names:
             try:
-                # 簡單抓取累積總表
                 df_preview = pd.read_excel(xls, '累積總表', header=None, nrows=5)
                 h_idx = 0
                 for i, row in enumerate(df_preview.values):
@@ -168,7 +173,7 @@ else:
             except:
                 st.warning("累積總表格式讀取異常。")
 
-    # === Tab 2: 年度回顧 (含月損益表) ===
+    # === Tab 2: 年度回顧 ===
     with tab2:
         target_years = [2025, 2024, 2023, 2022, 2021]
         
@@ -177,22 +182,17 @@ else:
         for i, year in enumerate(target_years):
             result = plot_yearly_trend(xls, year)
             if result:
-                fig, final, high, low, m_stats = result # 多接收一個 m_stats
+                fig, final, high, low, m_stats = result
                 
                 st.markdown(f"### {year} 年")
-                
-                # 1. 顯示年度 KPI
                 k1, k2, k3 = st.columns(3)
                 k1.metric(f"{year} 總損益", f"${final:,.0f}")
                 k2.metric("高點", f"${high:,.0f}")
                 k3.metric("低點", f"${low:,.0f}")
                 
-                # 2. 顯示圖表
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 3. 顯示每月損益表 (New!)
                 st.caption(f"📅 {year} 各月損益統計：")
-                # 轉成 DataFrame 顯示比較整齊
                 df_m_stats = pd.DataFrame([m_stats])
                 st.dataframe(df_m_stats, hide_index=True, use_container_width=True)
                 
