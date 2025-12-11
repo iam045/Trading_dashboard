@@ -147,6 +147,8 @@ def calculate_kpis(df):
     }
 
 def calculate_trends(df):
+    # 這裡進行的是「全局計算」 (Cumulative)
+    # 所有的指標都是從第一筆交易開始累計的
     df = df.sort_values('Date').reset_index(drop=True).copy()
     
     # R 趨勢計算 (累計)
@@ -179,34 +181,35 @@ def calculate_trends(df):
 # ==========================================
 
 def hex_to_rgba(hex_color, opacity=0.1):
-    """
-    輔助函式：將 #RRGGBB 轉換為 rgba(r, g, b, opacity)
-    """
+    """將 #RRGGBB 轉換為 rgba(r, g, b, opacity)"""
     hex_color = hex_color.lstrip('#')
     if len(hex_color) == 6:
         r = int(hex_color[0:2], 16)
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
         return f"rgba({r}, {g}, {b}, {opacity})"
-    return hex_color # 如果格式不對，回傳原值避免報錯
+    return hex_color 
 
-def get_mini_chart(df_t, col_name, color, title):
-    """生成極簡的小趨勢圖 (用於 Popover)"""
-    # 呼叫轉換函式取得正確的 rgba 格式
+def get_mini_chart(df_t, col_name, color, title, height=400):
+    """
+    生成趨勢圖 (支援局部顯示與圖表高度設定)
+    height 預設調大至 400
+    """
     fill_color = hex_to_rgba(color, 0.15)
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_t['Date'], y=df_t[col_name], # X軸使用 Date
+        x=df_t['Date'], y=df_t[col_name], 
         mode='lines', name=col_name,
-        line=dict(color=color, width=2),
+        line=dict(color=color, width=2.5),
         fill='tozeroy', 
-        fillcolor=fill_color # 使用修正後的顏色
+        fillcolor=fill_color 
     ))
     fig.update_layout(
         title=dict(text=title, font=dict(size=14), x=0.5, xanchor='center'),
-        height=250, margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), # 隱藏 X 軸讓畫面乾淨
+        height=height, # 使用傳入的高度
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=True), # 顯示日期
         yaxis=dict(showgrid=True, gridcolor='#eee'),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         showlegend=False
@@ -227,38 +230,43 @@ def draw_kpi_cards_with_charts(kpi, df_t):
     # 第一排 KPI
     c1, c2, c3, c4, c5 = st.columns(5)
     
-    # 1. 總損益
+    # 1. 總損益 (需求: 不需要彈窗走勢)
     with c1:
         st.metric("總損益", f"${kpi['Total PnL']:,.0f}")
-        with st.popover("📈 損益走勢", use_container_width=True):
-            st.plotly_chart(get_mini_chart(df_t, 'Total PnL', '#81C7D4', '累計損益曲線 (Total PnL)'), use_container_width=True)
 
     # 2. 期望值
     with c2:
         st.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=tips['Exp'])
         with st.popover("📈 趨勢圖", use_container_width=True):
-            st.plotly_chart(get_mini_chart(df_t, 'Expectancy', '#FF8A65', '期望值走勢 (Expectancy)'), use_container_width=True)
+            # 局部顯示控制
+            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_exp")
+            df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
+            st.plotly_chart(get_mini_chart(df_show, 'Expectancy', '#FF8A65', '期望值走勢'), use_container_width=True)
 
     # 3. 獲利因子
     with c3:
         st.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=tips['PF'])
         with st.popover("📈 趨勢圖", use_container_width=True):
-            st.plotly_chart(get_mini_chart(df_t, 'Profit Factor', '#BA68C8', '獲利因子走勢 (PF)'), use_container_width=True)
+            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_pf")
+            df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
+            st.plotly_chart(get_mini_chart(df_show, 'Profit Factor', '#BA68C8', '獲利因子走勢'), use_container_width=True)
 
     # 4. 盈虧比 (R)
     with c4:
         st.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=tips['Payoff'])
         with st.popover("📈 趨勢圖", use_container_width=True):
-            st.plotly_chart(get_mini_chart(df_t, 'Payoff Ratio', '#4DB6AC', '盈虧比走勢 (R Payoff)'), use_container_width=True)
+            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_payoff")
+            df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
+            st.plotly_chart(get_mini_chart(df_show, 'Payoff Ratio', '#4DB6AC', '盈虧比走勢'), use_container_width=True)
 
-    # 5. 勝率 (勝率通常波動小，這裡可以不放圖，或放累計勝率)
+    # 5. 勝率
     with c5:
         st.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=tips['Win'])
         st.write("") 
 
     st.write("") # 間距
 
-    # 第二排 KPI (無圖表)
+    # 第二排 KPI
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次")
@@ -266,7 +274,9 @@ def draw_kpi_cards_with_charts(kpi, df_t):
     with d4:
         st.metric("穩定度 R²", f"{kpi['R Squared']:.2f}", help=tips['RSQ'])
         with st.popover("📈 趨勢圖", use_container_width=True):
-             st.plotly_chart(get_mini_chart(df_t, 'R Squared', '#9575CD', '穩定度走勢 (R²)'), use_container_width=True)
+             range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_rsq")
+             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
+             st.plotly_chart(get_mini_chart(df_show, 'R Squared', '#9575CD', '穩定度走勢'), use_container_width=True)
     d5.empty()
 
 @st.fragment
@@ -367,9 +377,9 @@ def display_expectancy_lab(xls):
 
     # 計算
     kpi = calculate_kpis(df_kpi)
-    df_trends = calculate_trends(df_kpi) # 預先計算趨勢
+    df_trends = calculate_trends(df_kpi) # 預先計算全局趨勢
 
-    # 1. KPI 區塊 (包含圖表 Popover)
+    # 1. KPI 區塊 (包含圖表 Popover, 支援局部切換)
     draw_kpi_cards_with_charts(kpi, df_trends)
     
     st.markdown("---")
@@ -377,5 +387,5 @@ def display_expectancy_lab(xls):
     # 2. 凱利公式
     draw_kelly_fragment(kpi)
     
-    # 3. 日曆 (不再需要 Tab 2 的趨勢圖，因為已經搬到上面了)
+    # 3. 日曆
     draw_calendar_fragment(df_cal, chart_theme)
