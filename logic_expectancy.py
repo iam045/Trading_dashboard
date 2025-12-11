@@ -145,24 +145,19 @@ def calculate_kpis(df):
     total_pnl = df['PnL'].sum()
     win_rate = len(wins) / total
     
-    # --- 修正 2: 盈虧比改用 R 計算 ---
-    # 平均獲利 R
+    # KPI 卡片使用的 R 盈虧比
     avg_win_r = df[df['R'] > 0]['R'].mean() if len(wins) > 0 else 0
-    # 平均虧損 R (取絕對值)
     avg_loss_r = abs(df[df['R'] <= 0]['R'].mean()) if len(losses) > 0 else 0
-    
-    # 盈虧比 (R based)
     payoff_r = avg_win_r / avg_loss_r if avg_loss_r > 0 else 0
     
-    # 獲利因子 (維持用金額算較準確反映 "錢" 的效率，或者也可以改成 R，這裡維持金額 PF)
+    # 獲利因子 (維持金額)
     pf = wins['PnL'].sum() / abs(losses['PnL'].sum()) if losses['PnL'].sum() != 0 else float('inf')
     
-    # --- 修正 1: 期望值計算邏輯確認 ---
-    # 依使用者需求：總損益 / 總風險
+    # 期望值 (總損益/總風險)
     total_risk = df['Risk_Amount'].sum()
     exp_custom = total_pnl / total_risk if total_risk > 0 else 0
     
-    # --- 修正 3: 凱利公式使用 Payoff (R) ---
+    # 凱利公式 (使用 R Payoff)
     full_kelly = (win_rate - (1 - win_rate) / payoff_r) if payoff_r > 0 else 0
     
     max_win, max_loss = calculate_streaks(df)
@@ -170,7 +165,7 @@ def calculate_kpis(df):
     
     return {
         "Total PnL": total_pnl, "Total Trades": total, "Win Rate": win_rate,
-        "Payoff Ratio": payoff_r, # 這是 R 版本
+        "Payoff Ratio": payoff_r, 
         "Profit Factor": pf, "Expectancy": exp_custom,
         "Max Win Streak": max_win, "Max Loss Streak": max_loss, "R Squared": r_sq,
         "Full Kelly": full_kelly
@@ -221,30 +216,48 @@ def generate_calendar_html(year, month, pnl_dict):
     html += "</tbody></table>"
     return html
 
+# ==========================================
+# 2. 進階計算：趨勢分析 (已修正 R 邏輯)
+# ==========================================
+
 def calculate_trends(df, mode='cumulative', window=50):
     df = df.sort_values('Date').reset_index(drop=True).copy()
     df['Original_Trade_Num'] = df.index + 1
     
+    # --- 1. 期望值 & 獲利因子 (維持原本邏輯) ---
     df['gross_win'] = df['PnL'].apply(lambda x: x if x > 0 else 0)
     df['gross_loss'] = df['PnL'].apply(lambda x: abs(x) if x <= 0 else 0)
-    df['is_win'] = (df['PnL'] > 0).astype(int)
     
     s_pnl = df['PnL'].cumsum()
     s_risk = df['Risk_Amount'].cumsum()
     s_g_win = df['gross_win'].cumsum()
     s_g_loss = df['gross_loss'].cumsum()
-    s_c_win = df['is_win'].cumsum()
     
-    # 趨勢圖中的期望值也跟著邏輯一致
-    df['Expectancy'] = s_pnl / s_risk.replace(0, np.nan)
+    df['Expectancy'] = s_pnl / s_risk.replace(0, np.nan) # 期望值 = 總損益 / 總初始風險 (累計)
     df['Profit Factor'] = (s_g_win / s_g_loss.replace(0, np.nan)).fillna(10).clip(upper=10)
+
+    # --- 2. 盈虧比 Payoff Ratio (修正為 R based) ---
+    # 分離 R 值
+    df['win_r_val'] = df['R'].apply(lambda x: x if x > 0 else 0)
+    df['loss_r_val'] = df['R'].apply(lambda x: abs(x) if x <= 0 else 0)
+    df['is_win'] = (df['PnL'] > 0).astype(int)
     
-    # Payoff 趨勢圖 (這裡為了顯示方便，仍維持累計的金額 Payoff，
-    # 若要改 R 趨勢會需要更複雜運算，暫時維持金額 Payoff 或略過)
-    avg_win = s_g_win / s_c_win.replace(0, np.nan)
-    avg_loss = s_g_loss / (df['is_win'].count() - s_c_win).replace(0, np.nan) 
-    df['Payoff Ratio'] = avg_win / avg_loss.replace(0, np.nan)
+    # 累計 R
+    s_win_r = df['win_r_val'].cumsum()
+    s_loss_r = df['loss_r_val'].cumsum()
     
+    # 累計筆數
+    s_win_count = df['is_win'].cumsum()
+    s_loss_count = (df.index + 1) - s_win_count
+    
+    # 累計平均 R
+    cum_avg_win_r = s_win_r / s_win_count.replace(0, np.nan)
+    cum_avg_loss_r = s_loss_r / s_loss_count.replace(0, np.nan)
+    
+    # 計算趨勢指標
+    df['Payoff Ratio'] = cum_avg_win_r / cum_avg_loss_r.replace(0, np.nan)
+    
+    # --- 3. 穩定度 R² ---
     equity = df['PnL'].cumsum()
     df['R Squared'] = equity.expanding(min_periods=3).corr(pd.Series(df.index)) ** 2
     
@@ -258,7 +271,6 @@ def calculate_trends(df, mode='cumulative', window=50):
 
 @st.fragment
 def draw_kelly_fragment(kpi):
-    # 置中版面
     st.markdown("<h4 style='text-align: center; color: #888;'>Position Sizing (Kelly)</h4>", unsafe_allow_html=True)
     c_center = st.columns([1, 2, 2, 2, 2, 1]) 
     
@@ -269,18 +281,13 @@ def draw_kelly_fragment(kpi):
         fraction_options = [1/4, 1/5, 1/6, 1/7, 1/8]
         kelly_frac = st.selectbox("凱利倍數", fraction_options, index=1, format_func=lambda x: f"1/{int(1/x)} Kelly")
         
-    # 取得參數
     win_rate = kpi.get('Win Rate', 0)
-    payoff_r = kpi.get('Payoff Ratio', 0) # 這是 R 的盈虧比
+    payoff_r = kpi.get('Payoff Ratio', 0) # R Payoff
     full_kelly_val = kpi.get('Full Kelly', 0)
     
-    # 計算
     adj_kelly = max(0, full_kelly_val * kelly_frac)
     risk_amt = capital * adj_kelly
     
-    # -----------------------------------------------
-    # 建立 Tooltip: 更新顯示文字為 "盈虧比 (R)"
-    # -----------------------------------------------
     help_percent_calc = f"""
     【凱利公式 % 計算詳解】
     
@@ -300,7 +307,6 @@ def draw_kelly_fragment(kpi):
     """
 
     with c_center[3]:
-        # Tooltip 放在這裡
         st.metric("建議倉位 %", f"{adj_kelly*100:.2f}%", help=help_percent_calc)
     
     with c_center[4]:
@@ -360,7 +366,7 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
             df_t = calculate_trends(df_kpi, mode_key, win_size)
             if not df_t.empty:
                 line_colors = ['#81C7D4', '#FF8A65', '#BA68C8', '#4DB6AC']
-                fig = make_subplots(rows=2, cols=2, vertical_spacing=0.15, subplot_titles=("期望值 (Exp)", "獲利因子 (PF)", "盈虧比 (Payoff)", "穩定度 (R²)"))
+                fig = make_subplots(rows=2, cols=2, vertical_spacing=0.15, subplot_titles=("期望值 (Exp)", "獲利因子 (PF)", "盈虧比 (R Payoff)", "穩定度 (R²)"))
                 hover = "日期: %{x}<br>數值: %{y:.2f}<br>序號: %{customdata[0]}<extra></extra>"
                 metrics = [('Expectancy', 0), ('Profit Factor', 1), ('Payoff Ratio', 2), ('R Squared', 3)]
                 
@@ -388,9 +394,6 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df_kpi)
     
-    # ----------------------------------------------------
-    # 更新後的 Tooltip 敘述
-    # ----------------------------------------------------
     help_exp = "定義: 每單位風險的平均獲利 (Total PnL / Total Risk)。\n公式: 總損益 ÷ 總初始風險"
     help_pf = "定義: 總獲利金額與總虧損金額的比率，大於 1.5 為佳。\n公式: 總獲利金額 ÷ 總虧損金額"
     help_payoff = "定義: 平均每筆獲利 R 與平均每筆虧損 R 的比例。\n公式: Avg Win R ÷ Avg Loss R"
@@ -399,9 +402,9 @@ def display_expectancy_lab(xls):
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益", f"${kpi['Total PnL']:,.0f}")
-    c2.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=help_exp) # 已更新 Tooltip
+    c2.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=help_exp)
     c3.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=help_pf)
-    c4.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=help_payoff) # 已更新 Tooltip
+    c4.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=help_payoff)
     c5.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=help_win)
     
     st.write("") 
