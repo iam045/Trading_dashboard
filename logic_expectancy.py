@@ -122,14 +122,10 @@ def calculate_kpis(df):
 def generate_calendar_html(year, month, pnl_dict):
     """
     生成 HTML 格式的月曆
-    修正重點：
-    1. 接收 pnl_dict (Key為 'YYYY-MM-DD' 字串)，解決日期比對錯誤問題
-    2. 移除縮排避免 Markdown 解析錯誤
     """
     cal = calendar.Calendar(firstweekday=6) # 星期日開始
     month_days = cal.monthdayscalendar(year, month)
     
-    # CSS
     html = f"""
 <style>
     .cal-container {{ font-family: "Source Sans Pro", sans-serif; width: 100%; }}
@@ -161,7 +157,6 @@ def generate_calendar_html(year, month, pnl_dict):
                 html += "<td class='cal-td' style='background-color: #fafafa;'></td>"
                 continue
             
-            # 使用字串 Key 進行精確查找 (解決第二週後的 Bug)
             date_key = f"{year}-{month:02d}-{day:02d}"
             day_pnl = pnl_dict.get(date_key, 0)
             has_trade = date_key in pnl_dict
@@ -201,7 +196,7 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df)
     
-    # --- Row 1: 5欄位 ---
+    # --- Row 1 ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
@@ -213,7 +208,7 @@ def display_expectancy_lab(xls):
     
     st.markdown("---")
     
-    # --- Row 2: 5欄位 ---
+    # --- Row 2 ---
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
@@ -239,40 +234,35 @@ def display_expectancy_lab(xls):
 
     st.markdown("---")
 
-    # --- 月曆儀表板 (Calendar Dashboard) ---
+    # --- 月曆儀表板 ---
     st.markdown("#### 📅 交易月曆 (Monthly Performance)")
     
-    # 1. 準備純字串索引的字典，解決日期錯亂問題
-    #    格式轉換為 'YYYY-MM-DD'，確保與日曆迴圈完全匹配
+    # 建立字串 Key 的字典
     df['DateStr'] = df['Date'].dt.strftime('%Y-%m-%d')
     daily_pnl_series = df.groupby('DateStr')['PnL'].sum()
-    pnl_dict = daily_pnl_series.to_dict() # 變成 {'2025-12-01': 500, ...}
+    pnl_dict = daily_pnl_series.to_dict()
     
-    # 取得月份列表
-    df['DateOnly'] = df['Date'].dt.date # 用於下拉選單排序
-    unique_months = pd.to_datetime(df['DateOnly']).dt.to_period('M').unique().sort_values(ascending=False)
+    # [修正] 產生不重複月份並排序
+    # 原本使用 unique() 會回傳 numpy array 導致沒有 sort_values
+    # 改用 drop_duplicates() 保持 Series 格式
+    unique_months = df['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
     
     if len(unique_months) > 0:
-        # 修改點 1: 使用 st.columns 縮短下拉選單寬度
         sel_col, _ = st.columns([1, 4]) 
         with sel_col:
-            # 修改點 2: 加入 key='cal_month_selector' 防止隨意重置
             selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
         
         y, m = selected_period.year, selected_period.month
         
-        # 準備當月統計數據 (用於右側)
-        # 這裡需要篩選出當月的數據進行計算
-        month_mask = (pd.to_datetime(daily_pnl_series.index).year == y) & \
-                     (pd.to_datetime(daily_pnl_series.index).month == m)
-        month_data = daily_pnl_series[month_mask]
+        # 篩選當月數據
+        # 確保比較對象都是 Period 或 Timestamp，這裡用字串比較最穩
+        month_prefix = f"{y}-{m:02d}"
+        month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
         
-        # --- 版面配置 ---
         cal_col, stat_col = st.columns([3, 1])
         
         with cal_col:
             st.markdown(f"**{selected_period.strftime('%B %Y')}**")
-            # 呼叫 HTML 生成器，傳入 pnl_dict
             cal_html = generate_calendar_html(y, m, pnl_dict)
             st.markdown(cal_html, unsafe_allow_html=True)
             
