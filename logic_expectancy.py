@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 
 def inject_custom_css():
     """
-    鎖定現代極簡風格 (Modern Minimalist)
+    鎖定現代極簡風格 (Modern Minimalist) - 已修正靠左對齊需求
     """
     css = """
     <style>
@@ -24,9 +24,9 @@ def inject_custom_css():
 
         .stApp { background-color: #f8f9fa; }
 
-        .block-container { text-align: center; }
-        h1, h2, h3, p { text-align: center !important; }
-
+        /* 雖然保留全域置中讓 Metric 好看，但我們會在個別元件覆寫靠左 */
+        .block-container { text-align: center; } 
+        
         div[data-testid="stMetric"] {
             background-color: #ffffff;
             border: 1px solid #eee;
@@ -54,11 +54,29 @@ def inject_custom_css():
             font-size: 26px; font-weight: 600; color: #333; text-align: center;
         }
 
-        .stTabs [data-baseweb="tab-list"] { justify-content: center; gap: 20px; }
-        .stTabs [data-baseweb="tab"] { background-color: transparent; border: none; font-weight: 600; color: #aaa; }
-        .stTabs [aria-selected="true"] { color: #81C7D4 !important; border-bottom: 2px solid #81C7D4 !important; }
+        /* [修改 2] 頁籤選單靠左 */
+        .stTabs [data-baseweb="tab-list"] { 
+            justify-content: flex-start !important; /* 強制靠左 */
+            gap: 20px; 
+        }
+        .stTabs [data-baseweb="tab"] { 
+            background-color: transparent; 
+            border: none; 
+            font-weight: 600; 
+            color: #aaa; 
+        }
+        .stTabs [aria-selected="true"] { 
+            color: #81C7D4 !important; 
+            border-bottom: 2px solid #81C7D4 !important; 
+        }
         
-        .stSelectbox, .stNumberInput, .stSlider { text-align: center; }
+        /* [修改 3] 輸入框文字靠左 (影響日曆選單) */
+        .stSelectbox, .stNumberInput, .stSlider { 
+            text-align: left !important; 
+        }
+        div[data-baseweb="select"] {
+            text-align: left !important;
+        }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -314,6 +332,7 @@ def draw_kelly_fragment(kpi):
 
 @st.fragment
 def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
+    # 頁籤已透過 CSS 靠左
     tab1, tab2 = st.tabs(["📅 交易日曆", "📈 趨勢分析"])
     
     with tab1:
@@ -323,8 +342,10 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
             unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
             
             if len(unique_months) > 0:
-                c_a, c_b, c_c = st.columns([2, 1, 2])
-                with c_b:
+                # [修改 3] 日曆選單靠左配置
+                # 使用 1:4 的比例，讓選單在最左邊
+                c_sel, c_rest = st.columns([1, 4])
+                with c_sel:
                     sel_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector', label_visibility="collapsed")
                 
                 y, m = sel_period.year, sel_period.month
@@ -383,9 +404,8 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
 
 def display_expectancy_lab(xls):
     chart_theme = inject_custom_css()
-    st.markdown("<h1>TRADING PERFORMANCE</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #999; margin-bottom: 40px;'>現代極簡交易儀表板</p>", unsafe_allow_html=True)
-
+    # [修改 1] 移除標題與副標題
+    
     df_kpi, err_kpi = get_expectancy_data(xls)
     df_cal, err_cal, _ = get_daily_report_data(xls)
 
