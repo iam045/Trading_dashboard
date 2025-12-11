@@ -186,18 +186,19 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. 進階計算：趨勢分析 (支援滾動視窗 - 修正版)
+# 2. 進階計算：趨勢分析 (修正為完全筆數基礎)
 # ==========================================
 
 def calculate_trends(df, mode='cumulative', window=50):
     """
-    計算每日 KPI 變化，支援累計或滾動模式
-    df: 交易明細
-    mode: 'cumulative' (累計) 或 'rolling' (滾動)
-    window: 滾動視窗大小 (筆數)
+    計算每筆交易後的 KPI 變化
+    修正：不進行 groupby('Date')，直接返回所有交易的 rolling 結果，呈現真實的筆數變化。
     """
-    # [修正] 確保排序並 重置 Index，這對於 rolling 計算至關重要
+    # 確保排序並建立乾淨的索引 (0, 1, 2...)
     df = df.sort_values('Date').reset_index(drop=True).copy()
+    
+    # 增加交易序號，方便 Tooltip 顯示
+    df['Trade_Num'] = df.index + 1
     
     # 預計算輔助欄位
     df['gross_win'] = df['PnL'].apply(lambda x: x if x > 0 else 0)
@@ -205,7 +206,6 @@ def calculate_trends(df, mode='cumulative', window=50):
     df['is_win'] = (df['PnL'] > 0).astype(int)
     df['is_loss'] = (df['PnL'] <= 0).astype(int)
     
-    # 準備計算用的 Series
     pnl_series = df['PnL']
     risk_series = df['Risk_Amount']
     gross_win_series = df['gross_win']
@@ -214,7 +214,6 @@ def calculate_trends(df, mode='cumulative', window=50):
     loss_count_series = df['is_loss']
     
     if mode == 'rolling':
-        # 滾動計算 (Sum)
         s_pnl = pnl_series.rolling(window=window, min_periods=1).sum()
         s_risk = risk_series.rolling(window=window, min_periods=1).sum()
         s_g_win = gross_win_series.rolling(window=window, min_periods=1).sum()
@@ -222,7 +221,6 @@ def calculate_trends(df, mode='cumulative', window=50):
         s_c_win = win_count_series.rolling(window=window, min_periods=1).sum()
         s_c_loss = loss_count_series.rolling(window=window, min_periods=1).sum()
     else:
-        # 累計計算 (Cumsum)
         s_pnl = pnl_series.cumsum()
         s_risk = risk_series.cumsum()
         s_g_win = gross_win_series.cumsum()
@@ -230,37 +228,31 @@ def calculate_trends(df, mode='cumulative', window=50):
         s_c_win = win_count_series.cumsum()
         s_c_loss = loss_count_series.cumsum()
 
-    # --- 1. 期望值 ---
+    # --- KPI 計算 ---
     df['Expectancy'] = s_pnl / s_risk.replace(0, np.nan)
     
-    # --- 2. 獲利因子 ---
     df['Profit Factor'] = s_g_win / s_g_loss.replace(0, np.nan)
     df['Profit Factor'] = df['Profit Factor'].fillna(10).clip(upper=10)
 
-    # --- 3. 盈虧比 ---
     avg_win = s_g_win / s_c_win.replace(0, np.nan)
     avg_loss = s_g_loss / s_c_loss.replace(0, np.nan)
     df['Payoff Ratio'] = avg_win / avg_loss.replace(0, np.nan)
     
-    # --- 4. 穩定度 (R Squared) ---
-    equity_curve = df['PnL'].cumsum() # 資金曲線永遠是累計的，我們是算它局部的斜率
+    # --- R Squared ---
+    equity_curve = df['PnL'].cumsum()
     x_axis = pd.Series(np.arange(len(df)), index=df.index)
     
     if mode == 'rolling':
-        # 滾動 R平方: 計算「最近 N 筆交易」的資金曲線線性度
         r = equity_curve.rolling(window=window, min_periods=3).corr(x_axis)
         df['R Squared'] = r ** 2
     else:
-        # 累計 R平方
         r = equity_curve.expanding(min_periods=3).corr(x_axis)
         df['R Squared'] = r ** 2
 
     df = df.fillna(0)
     
-    # 取每日的「最後一筆」狀態作為當日數值
-    daily_trends = df.groupby('Date').last().reset_index()
-    
-    return daily_trends
+    # [修正重點] 直接回傳完整 DataFrame，包含每一筆交易，不再只取每日最後一筆
+    return df
 
 # ==========================================
 # 3. UI 顯示邏輯 (Fragment 局部刷新區塊)
@@ -287,9 +279,6 @@ def draw_kelly_fragment(kpi):
 
 @st.fragment
 def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
-    """
-    底部區塊：包含 [交易日曆] 與 [趨勢分析]
-    """
     tab1, tab2 = st.tabs(["📅 交易日曆", "📈 趨勢分析"])
     
     # --- Tab 1: 日曆 ---
@@ -342,24 +331,22 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
     with tab2:
         if df_kpi is not None and not df_kpi.empty:
             
-            # 控制列
             cc1, cc2 = st.columns([1, 2])
             with cc1:
-                calc_mode = st.radio("計算模式", ["Cumulative (累計)", "Rolling (滾動)"], index=1, horizontal=True, help="累計: 從第一筆交易算到現在\n滾動: 只計算最近 N 筆交易")
+                calc_mode = st.radio("計算模式", ["Cumulative (累計)", "Rolling (滾動)"], index=1, horizontal=True)
             
-            # [修正] 預設視窗大小改為 50，避免一開始視窗太大導致看起來像累計
             window_size = 50
             if "Rolling" in calc_mode:
                 with cc2:
-                    window_size = st.slider("滾動視窗大小 (筆數)", min_value=10, max_value=200, value=50, step=10, help="設定統計範圍。若設定為 50，代表圖表上的每一點都是「當下回推 50 筆交易」的平均表現。")
+                    window_size = st.slider("滾動視窗大小 (筆數)", min_value=10, max_value=200, value=50, step=10)
                 mode_key = 'rolling'
             else:
                 mode_key = 'cumulative'
 
-            # 計算趨勢
+            # 計算趨勢 (回傳完整筆數資料)
             df_trends = calculate_trends(df_kpi, mode=mode_key, window=window_size)
             
-            # 繪圖
+            # 繪圖 (使用完整資料)
             fig = make_subplots(
                 rows=2, cols=2,
                 subplot_titles=(
@@ -371,10 +358,40 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
                 vertical_spacing=0.15
             )
 
-            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Expectancy'], mode='lines', name='Exp', line=dict(color='#636EFA', width=2)), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Profit Factor'], mode='lines', name='PF', line=dict(color='#00CC96', width=2)), row=1, col=2)
-            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Payoff Ratio'], mode='lines', name='Payoff', line=dict(color='#EF553B', width=2)), row=2, col=1)
-            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['R Squared'], mode='lines', name='R²', line=dict(color='#AB63FA', width=2)), row=2, col=2)
+            # 設定 hovertemplate 顯示交易序號
+            hover_template = "日期: %{x}<br>數值: %{y:.2f}<br>交易序號: %{customdata[0]}<extra></extra>"
+
+            # 1. Exp
+            fig.add_trace(go.Scatter(
+                x=df_trends['Date'], y=df_trends['Expectancy'], 
+                customdata=df_trends[['Trade_Num']],
+                hovertemplate=hover_template,
+                mode='lines', name='Exp', line=dict(color='#636EFA', width=1.5)
+            ), row=1, col=1)
+
+            # 2. PF
+            fig.add_trace(go.Scatter(
+                x=df_trends['Date'], y=df_trends['Profit Factor'], 
+                customdata=df_trends[['Trade_Num']],
+                hovertemplate=hover_template,
+                mode='lines', name='PF', line=dict(color='#00CC96', width=1.5)
+            ), row=1, col=2)
+
+            # 3. Payoff
+            fig.add_trace(go.Scatter(
+                x=df_trends['Date'], y=df_trends['Payoff Ratio'], 
+                customdata=df_trends[['Trade_Num']],
+                hovertemplate=hover_template,
+                mode='lines', name='Payoff', line=dict(color='#EF553B', width=1.5)
+            ), row=2, col=1)
+
+            # 4. R2
+            fig.add_trace(go.Scatter(
+                x=df_trends['Date'], y=df_trends['R Squared'], 
+                customdata=df_trends[['Trade_Num']],
+                hovertemplate=hover_template,
+                mode='lines', name='R²', line=dict(color='#AB63FA', width=1.5)
+            ), row=2, col=2)
 
             fig.update_layout(height=500, showlegend=False, margin=dict(l=20, r=20, t=40, b=20))
             fig.update_xaxes(showgrid=False)
@@ -383,7 +400,7 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
             st.plotly_chart(fig, use_container_width=True)
             
             if mode_key == 'rolling':
-                st.caption(f"💡 提示：若您的總交易筆數少於 {window_size} 筆，滾動模式的結果將會與累計模式相同。請嘗試調小視窗大小。")
+                st.caption(f"💡 顯示所有交易的 Rolling 變化 (當日多筆交易將顯示垂直變動)。")
         else:
             st.info("無足夠交易數據可繪製趨勢圖。")
 
