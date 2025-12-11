@@ -212,16 +212,29 @@ else:
                     if y_col:
                         latest_val = df_total[y_col].iloc[-1]
                         st.metric("歷史總權益", f"${latest_val:,.0f}")
-                        # 簡單線圖不需紅綠分色，保持藍色
-                        st.plotly_chart(pd.options.plotting.backend == "plotly" or go.Figure(go.Scatter(y=df_total[y_col])), use_container_width=True)
-                        # 修正：簡單用 plotly express 畫
+                        # 修正：使用 plotly express
                         import plotly.express as px
                         st.plotly_chart(px.line(df_total, y=y_col, title="歷史資金成長"), use_container_width=True)
             except: pass
 
-    # === Tab 2: 年度回顧 ===
+    # === Tab 2: 年度回顧 (自動年份偵測) ===
     with tab2:
-        target_years = [2025, 2024, 2023, 2022, 2021]
+        # 🔥 新增功能：自動從分頁名稱中偵測年份
+        detected_years = set()
+        for name in xls.sheet_names:
+            # 移除所有符號，尋找 "日報表YYYY"
+            clean_name = re.sub(r"[ _－/.-]", "", str(name))
+            match = re.search(r"日報表(\d{4})", clean_name)
+            if match:
+                detected_years.add(int(match.group(1)))
+        
+        # 排序：從新到舊 (2026, 2025, 2024...)
+        if detected_years:
+            target_years = sorted(list(detected_years), reverse=True)
+        else:
+            # 如果都找不到，使用預設值
+            target_years = [2025, 2024, 2023, 2022, 2021]
+
         progress_bar = st.progress(0, text="數據載入中...")
         
         for i, year in enumerate(target_years):
@@ -229,7 +242,7 @@ else:
             if result:
                 fig, final, high, low, m_stats = result
                 
-                # 頁面文字標題 (保留)
+                # 頁面文字標題
                 note = " (記錄較不完整)" if year in [2021, 2022] else ""
                 st.markdown(f"### {year} 年{note}")
                 
@@ -239,7 +252,7 @@ else:
                 c2.metric("高點", f"${high:,.0f}") 
                 c3.metric("低點", f"${low:,.0f}")
                 
-                # 圖表 (無標題)
+                # 圖表
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # 月損益表
