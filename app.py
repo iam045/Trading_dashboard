@@ -101,10 +101,9 @@ def plot_yearly_trend(xls, year):
     df_year = pd.concat(all_data)
     df_year = df_year[df_year['Date'].dt.year == year]
     
-    # --- 🔥 關鍵修正：如果是未來年 (2026)，不要過濾！ ---
+    # 未來過濾邏輯
     current_year = datetime.now().year
     if year == current_year:
-        # 只有「今年」才需要砍掉未來的日期 (避免水平線)
         df_year = df_year[df_year['Date'] <= pd.Timestamp.now().normalize()]
     
     if df_year.empty: return None
@@ -112,13 +111,23 @@ def plot_yearly_trend(xls, year):
     df_year = df_year.sort_values('Date')
     df_year['Cumulative_PnL'] = df_year['Daily_PnL'].cumsum()
     
+    # --- 📊 統計指標計算 ---
     latest_pnl = df_year['Cumulative_PnL'].iloc[-1]
     max_pnl = df_year['Cumulative_PnL'].max()
     min_pnl = df_year['Cumulative_PnL'].min()
     
+    # 🔥 MDD 計算邏輯 (核心新增)
+    # 1. 算出累積至今的最高點 (Running Max)
+    running_max = df_year['Cumulative_PnL'].cummax()
+    # 2. 算出回撤 (Drawdown) = 當前權益 - 歷史最高
+    drawdown = df_year['Cumulative_PnL'] - running_max
+    # 3. 取最小的回撤值 (也就是跌最深的那一次)
+    mdd = drawdown.min()
+    
     monthly_sums = df_year.groupby(df_year['Date'].dt.month)['Daily_PnL'].sum()
     m_stats = {f"{m}月": f"${monthly_sums.get(m, 0):,.0f}" if m in monthly_sums else "---" for m in range(1, 13)}
 
+    # 插值與繪圖
     df_plot = insert_zero_crossings(df_year)
     y_pos = df_plot['Cumulative_PnL'].apply(lambda x: x if x >= 0 else None)
     y_neg = df_plot['Cumulative_PnL'].apply(lambda x: x if x <= 0 else None)
@@ -140,7 +149,7 @@ def plot_yearly_trend(xls, year):
         xaxis=dict(range=[f"{year}-01-01", f"{year}-12-31"], tickmode='array',
                    tickvals=month_starts, ticktext=[f"{m}月" for m in range(1, 13)])
     )
-    return fig, latest_pnl, max_pnl, min_pnl, m_stats
+    return fig, latest_pnl, max_pnl, min_pnl, mdd, m_stats
 
 # --- 5. 主程式執行 ---
 tab1, tab2 = st.tabs(["📊 總覽儀表板", "📅 年度戰績回顧"])
@@ -174,7 +183,7 @@ else:
                         st.plotly_chart(px.line(df_total, y=y_col, title="歷史資金成長"), use_container_width=True)
             except: pass
 
-    # === Tab 2: 年度回顧 (自動年份偵測) ===
+    # === Tab 2: 年度回顧 (含 MDD) ===
     with tab2:
         detected_years = set()
         for name in xls.sheet_names:
@@ -189,13 +198,19 @@ else:
         for i, year in enumerate(target_years):
             result = plot_yearly_trend(xls, year)
             if result:
-                fig, final, high, low, m_stats = result
+                fig, final, high, low, mdd, m_stats = result # 多接收一個 mdd
+                
                 note = " (記錄較不完整)" if year in [2021, 2022] else ""
                 st.markdown(f"### {year} 年{note}")
-                c1, c2, c3 = st.columns(3)
+                
+                # --- 4欄位 KPI ---
+                c1, c2, c3, c4 = st.columns(4)
                 c1.metric("總損益", f"${final:,.0f}") 
                 c2.metric("高點", f"${high:,.0f}") 
                 c3.metric("低點", f"${low:,.0f}")
+                # MDD 顯示 (紅色強調)
+                c4.metric("最大回檔 (MDD)", f"${mdd:,.0f}", delta_color="normal")
+                
                 st.plotly_chart(fig, use_container_width=True)
                 st.caption(f"📅 {year} 各月損益：")
                 st.dataframe(pd.DataFrame([m_stats]), hide_index=True, use_container_width=True)
@@ -203,8 +218,5 @@ else:
             progress_bar.progress((i + 1) / len(target_years))
         progress_bar.empty()
 
-    # === 🔧 系統診斷室 (驗證用) ===
-    with st.expander("🔧 系統診斷室 (點此檢查 Google 是否有傳回 2026)"):
-        st.write("程式讀到的所有分頁清單：")
-        st.code(xls.sheet_names)
+    with st.expander("🔧 系統診斷室 (年份偵測)"):
         st.write(f"程式自動偵測到的年份：{target_years}")
