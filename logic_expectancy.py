@@ -32,7 +32,7 @@ def inject_custom_css():
         div[data-testid="stMetricLabel"] { font-size: 13px; color: #888; justify-content: center; width: 100%; }
         div[data-testid="stMetricValue"] { font-size: 24px; font-weight: 600; color: #333; }
 
-        /* Popover 按鈕優化 (讓它看起來像個小標籤) */
+        /* Popover 按鈕優化 */
         button[kind="secondary"] {
             border: none;
             background: transparent;
@@ -58,7 +58,6 @@ def inject_custom_css():
         .day-num { font-size: 12px; color: #bbb; margin-bottom: 2px; }
         .day-pnl { font-size: 13px; font-weight: 600; }
         
-        /* 隱藏預設圖表選單 */
         .modebar { display: none !important; }
     </style>
     """
@@ -179,14 +178,30 @@ def calculate_trends(df):
 # 2. 繪圖與 UI 元件 (Fragments)
 # ==========================================
 
+def hex_to_rgba(hex_color, opacity=0.1):
+    """
+    輔助函式：將 #RRGGBB 轉換為 rgba(r, g, b, opacity)
+    """
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+        return f"rgba({r}, {g}, {b}, {opacity})"
+    return hex_color # 如果格式不對，回傳原值避免報錯
+
 def get_mini_chart(df_t, col_name, color, title):
     """生成極簡的小趨勢圖 (用於 Popover)"""
+    # 呼叫轉換函式取得正確的 rgba 格式
+    fill_color = hex_to_rgba(color, 0.15)
+    
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_t.index, y=df_t[col_name],
+        x=df_t['Date'], y=df_t[col_name], # X軸使用 Date
         mode='lines', name=col_name,
         line=dict(color=color, width=2),
-        fill='tozeroy', fillcolor=f"rgba{color[3:-1]}, 0.1)" # 簡單的填色效果
+        fill='tozeroy', 
+        fillcolor=fill_color # 使用修正後的顏色
     ))
     fig.update_layout(
         title=dict(text=title, font=dict(size=14), x=0.5, xanchor='center'),
@@ -239,7 +254,6 @@ def draw_kpi_cards_with_charts(kpi, df_t):
     # 5. 勝率 (勝率通常波動小，這裡可以不放圖，或放累計勝率)
     with c5:
         st.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=tips['Win'])
-        # 這裡留空或也可以加圖，保持對齊
         st.write("") 
 
     st.write("") # 間距
