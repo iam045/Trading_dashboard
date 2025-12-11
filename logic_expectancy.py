@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
-# 0. UI 風格與 CSS 注入器 (Modern Only)
+# 0. UI 風格與 CSS 注入器 (修復按鈕消失問題)
 # ==========================================
 
 def inject_custom_css():
@@ -18,68 +18,67 @@ def inject_custom_css():
         .block-container { text-align: center; }
         h1, h2, h3, p { text-align: center !important; }
 
-        /* --- 核心卡片樣式 (針對含有 Metric 的 Column) --- */
-        /* 使用 :has 選擇器，只針對包含 stMetric 的 Column 進行卡片化樣式設定 */
+        /* --- 1. 卡片容器樣式 --- */
+        /* 針對包含 Metric 的 Column 進行卡片化 */
         div[data-testid="column"]:has(div[data-testid="stMetric"]) {
             background-color: #ffffff;
-            border: 1px solid #eee;
+            border: 1px solid #e0e0e0;
             border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-            padding: 15px 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
+            padding: 15px 5px;
             text-align: center;
-            position: relative; /* 讓內部的絕對定位元素參考此容器 */
+            position: relative; /* 關鍵：讓內部的絕對定位以這個卡片為基準 */
             transition: transform 0.2s;
+            min-height: 140px;
         }
         div[data-testid="column"]:has(div[data-testid="stMetric"]):hover {
             border-color: #81C7D4;
             transform: translateY(-2px);
         }
 
-        /* 移除原本 stMetric 自己的邊框與背景 (改由 Column 負責) */
+        /* --- 2. 修正 Popover 按鈕 (趨勢圖示) --- */
+        /* 強制定位到卡片右上角 */
+        div[data-testid="column"] div[data-testid="stPopover"] {
+            position: absolute !important;
+            top: 8px !important;
+            right: 8px !important;
+            z-index: 999 !important; /* 確保浮在最上層 */
+            width: auto !important;
+        }
+
+        /* 按鈕本體樣式 - 強制顯示顏色 */
+        div[data-testid="column"] div[data-testid="stPopover"] button {
+            border: none !important;
+            background: transparent !important;
+            color: #81C7D4 !important; /* 確保顏色可見 */
+            font-size: 1.2rem !important;
+            padding: 0px !important;
+            margin: 0px !important;
+            line-height: 1 !important;
+            box-shadow: none !important;
+        }
+        
+        div[data-testid="column"] div[data-testid="stPopover"] button:hover {
+            color: #4dd0e1 !important;
+            transform: scale(1.1);
+        }
+
+        /* --- 3. Metric 樣式調整 --- */
         div[data-testid="stMetric"] {
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
             padding: 0 !important;
+            z-index: 1; /* 比按鈕低 */
         }
-        div[data-testid="stMetricLabel"] { font-size: 13px; color: #888; justify-content: center; width: 100%; }
-        div[data-testid="stMetricValue"] { font-size: 24px; font-weight: 600; color: #333; }
-
-        /* --- Popover 按鈕 (趨勢圖示) 定位 --- */
-        /* 將 Popover 容器定位到右上角，位於問號旁邊 */
-        div[data-testid="stPopover"] {
-            position: absolute !important;
-            top: 10px;
-            right: 35px; /* 右邊留空隙給 st.metric 的問號 (問號通常佔據最右側 20-30px) */
-            z-index: 100;
+        div[data-testid="stMetricLabel"] { 
+            font-size: 13px; color: #888; justify-content: center; width: 100%; 
+        }
+        div[data-testid="stMetricValue"] { 
+            font-size: 24px; font-weight: 600; color: #333; 
         }
 
-        /* 優化 Popover 按鈕樣式 (變成透明的圖示) */
-        div[data-testid="stPopover"] button {
-            border: none;
-            background: transparent;
-            color: #81C7D4; /* 圖示顏色 */
-            font-size: 1.1rem;
-            padding: 0;
-            width: 24px;
-            height: 24px;
-            line-height: 1;
-        }
-        div[data-testid="stPopover"] button:hover {
-            color: #5bb0c0;
-            background: transparent;
-            border: none;
-            transform: scale(1.1);
-        }
-        div[data-testid="stPopover"] button:active, 
-        div[data-testid="stPopover"] button:focus {
-            color: #5bb0c0;
-            background: transparent;
-            border: none;
-            outline: none;
-        }
-
-        /* --- 日曆與其他樣式 --- */
+        /* --- 其他樣式 --- */
         .cal-table { width: 100%; border-collapse: separate; border-spacing: 5px; margin: 0 auto; }
         .cal-td { 
             height: 70px; width: 14%; vertical-align: middle; 
@@ -91,8 +90,6 @@ def inject_custom_css():
         .day-num { font-size: 12px; color: #bbb; margin-bottom: 2px; }
         .day-pnl { font-size: 13px; font-weight: 600; }
         .modebar { display: none !important; }
-        
-        /* Selectbox 置左調整 */
         .cal-selector div[data-baseweb="select"] { text-align: left; }
     </style>
     """
@@ -100,7 +97,7 @@ def inject_custom_css():
     return "plotly_white"
 
 # ==========================================
-# 1. 資料處理與計算函式
+# 1. 資料處理與計算函式 (保持不變)
 # ==========================================
 
 def clean_numeric(series):
@@ -160,20 +157,13 @@ def calculate_r_squared(df):
 def calculate_kpis(df):
     total = len(df); wins = df[df['PnL'] > 0]; losses = df[df['PnL'] <= 0]
     total_pnl = df['PnL'].sum(); win_rate = len(wins) / total if total > 0 else 0
-    
-    # R Payoff
     avg_win_r = df[df['R'] > 0]['R'].mean() if len(wins) > 0 else 0
     avg_loss_r = abs(df[df['R'] <= 0]['R'].mean()) if len(losses) > 0 else 0
     payoff_r = avg_win_r / avg_loss_r if avg_loss_r > 0 else 0
-    
-    # Money PF
     pf = wins['PnL'].sum() / abs(losses['PnL'].sum()) if losses['PnL'].sum() != 0 else float('inf')
-    # Expectancy
     total_risk = df['Risk_Amount'].sum()
     exp_custom = total_pnl / total_risk if total_risk > 0 else 0
-    # Kelly
     full_kelly = (win_rate - (1 - win_rate) / payoff_r) if payoff_r > 0 else 0
-    
     max_win, max_loss = calculate_streaks(df); r_sq = calculate_r_squared(df)
     return {
         "Total PnL": total_pnl, "Total Trades": total, "Win Rate": win_rate,
@@ -183,18 +173,15 @@ def calculate_kpis(df):
 
 def calculate_trends(df):
     df = df.sort_values('Date').reset_index(drop=True).copy()
-    
     df['win_r_val'] = df['R'].apply(lambda x: x if x > 0 else 0)
     df['loss_r_val'] = df['R'].apply(lambda x: abs(x) if x <= 0 else 0)
     df['is_win'] = (df['PnL'] > 0).astype(int)
-    
     s_pnl = df['PnL'].cumsum()
     s_risk = df['Risk_Amount'].cumsum()
     s_win_r = df['win_r_val'].cumsum()
     s_loss_r = df['loss_r_val'].cumsum()
     s_win_count = df['is_win'].cumsum()
     s_loss_count = (df.index + 1) - s_win_count
-    
     s_g_win = df['PnL'].apply(lambda x: x if x > 0 else 0).cumsum()
     s_g_loss = df['PnL'].apply(lambda x: abs(x) if x <= 0 else 0).cumsum()
 
@@ -203,7 +190,6 @@ def calculate_trends(df):
     df['Profit Factor'] = (s_g_win / s_g_loss.replace(0, np.nan)).fillna(10).clip(upper=10)
     df['Payoff Ratio'] = (s_win_r / s_win_count) / (s_loss_r / s_loss_count).replace(0, np.nan)
     df['R Squared'] = s_pnl.expanding(min_periods=3).corr(pd.Series(df.index)) ** 2
-    
     return df.fillna(0)
 
 # ==========================================
@@ -242,7 +228,6 @@ def get_mini_chart(df_t, col_name, color, title, height=400):
 
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
-    # Tooltips
     tips = {
         "Exp": "定義: 每單位風險的平均獲利。\n公式: 總損益 ÷ 總初始風險",
         "PF": "定義: 總獲利金額與總虧損金額的比率。\n公式: 總獲利金額 ÷ 總虧損金額",
@@ -251,51 +236,48 @@ def draw_kpi_cards_with_charts(kpi, df_t):
         "RSQ": "定義: 權益曲線的回歸判定係數，越接近 1 代表獲利越穩定。"
     }
 
+    # 第一排
     c1, c2, c3, c4, c5 = st.columns(5)
     
-    # 1. 總損益 (純數據)
     with c1:
         st.metric("總損益", f"${kpi['Total PnL']:,.0f}")
 
-    # 2. 期望值 (圖示在右上角)
     with c2:
-        # 這裡的邏輯是: 先放 Popover (會被 CSS 移動到右上角)，再放 Metric
+        # 注意：先放 Popover，CSS 會把它定位到卡片右上角
+        # 這裡用 "📊" 作為按鈕標籤
         with st.popover("📊", use_container_width=False):
-            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_exp")
+            range_mode = st.radio("範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_exp")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Expectancy', '#FF8A65', '期望值走勢'), use_container_width=True)
         st.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=tips['Exp'])
 
-    # 3. 獲利因子
     with c3:
         with st.popover("📊", use_container_width=False):
-            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_pf")
+            range_mode = st.radio("範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_pf")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Profit Factor', '#BA68C8', '獲利因子走勢'), use_container_width=True)
         st.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=tips['PF'])
 
-    # 4. 盈虧比
     with c4:
         with st.popover("📊", use_container_width=False):
-            range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_payoff")
+            range_mode = st.radio("範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_payoff")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Payoff Ratio', '#4DB6AC', '盈虧比走勢'), use_container_width=True)
         st.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=tips['Payoff'])
 
-    # 5. 勝率 (純數據)
     with c5:
         st.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=tips['Win'])
 
     st.write("") 
 
-    # 第二排 (穩定度有圖)
+    # 第二排
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次")
     d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次")
     with d4:
         with st.popover("📊", use_container_width=False):
-             range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_rsq")
+             range_mode = st.radio("範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_rsq")
              df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
              st.plotly_chart(get_mini_chart(df_show, 'R Squared', '#9575CD', '穩定度走勢'), use_container_width=True)
         st.metric("穩定度 R²", f"{kpi['R Squared']:.2f}", help=tips['RSQ'])
@@ -400,7 +382,6 @@ def display_expectancy_lab(xls):
     if err_kpi: st.warning(f"KPI 讀取錯誤: {err_kpi}"); return
     if df_kpi is None or df_kpi.empty: st.info("無資料"); return
 
-    # 計算
     kpi = calculate_kpis(df_kpi)
     df_trends = calculate_trends(df_kpi)
 
