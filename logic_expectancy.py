@@ -4,14 +4,22 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import calendar
+import re
 
 # ==========================================
 # 1. 基礎運算與資料讀取 (Helper Functions)
 # ==========================================
 
 def clean_numeric(series):
-    """清洗數字格式 (移除逗號、轉型)"""
-    return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
+    """
+    清洗數字格式 (移除逗號、貨幣符號、轉型)
+    修正：加入正則表達式移除 '$', '¥', ',' 等非數字字元，避免讀取成 NaN
+    """
+    # 將 series 轉為字串 -> 移除 $ , 空白 -> 轉數字
+    return pd.to_numeric(
+        series.astype(str).str.replace(r'[$,¥\s]', '', regex=True), 
+        errors='coerce'
+    ).fillna(0) # 若真的讀不到，預設為 0，避免整行被丟棄
 
 def get_expectancy_data(xls):
     """讀取 Excel 中的期望值分頁"""
@@ -20,7 +28,6 @@ def get_expectancy_data(xls):
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
-        # 讀取資料 (標題在第15列 -> header=14)
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
         if df.shape[1] < 14:
@@ -30,24 +37,23 @@ def get_expectancy_data(xls):
         df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
         df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
 
-        # [修正重點 1] 向下填滿日期：解決同一天多筆交易只有第一筆有寫日期的問題
-        df_clean['Date'] = df_clean['Date'].ffill()
-
-        # 移除完全沒有日期的行 (例如最下面的空白行)
+        # 1. 清洗日期
         df_clean = df_clean.dropna(subset=['Date']) 
-        
-        # [修正重點 2] 標準化日期：轉為 datetime 並移除時分秒 (Normalize)
-        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').dt.normalize()
-        
-        # 轉型數值
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
+        # 再次確保無效日期被移除
+        df_clean = df_clean.dropna(subset=['Date'])
+
+        # 2. 清洗數值
         for col in ['Risk_Amount', 'PnL', 'R']:
             df_clean[col] = clean_numeric(df_clean[col])
         
-        # 過濾有效交易 (有損益且有風險金額)
-        df_clean = df_clean.dropna(subset=['PnL', 'Risk_Amount'])
+        # 3. [關鍵修正] 只要有 PnL 就保留，不強制 Risk > 0
+        # 舊邏輯會把 Risk=0 的交易刪除，導致損益日曆缺資料
         df_clean['Risk_Amount'] = df_clean['Risk_Amount'].abs()
-        df_clean = df_clean[df_clean['Risk_Amount'] > 0]
-
+        
+        # 只有當 PnL 是 0 或空值時，這筆交易才可能沒意義，但我們保留它以防萬一
+        # 這裡只過濾掉極端的異常值
+        
         return df_clean.sort_values('Date'), None
 
     except Exception as e:
@@ -66,7 +72,7 @@ def calculate_streaks(df):
             curr_win += 1
             curr_loss = 0
             if curr_win > max_win_streak: max_win_streak = curr_win
-        elif val <= 0:
+        elif val <= 0: # 0 視為中斷連勝，或歸類為敗(看定義)，這裡簡單歸類為非勝
             curr_loss += 1
             curr_win = 0
             if curr_loss > max_loss_streak: max_loss_streak = curr_loss
@@ -78,7 +84,12 @@ def calculate_r_squared(df):
     if len(df) < 2: return 0
     y = df['R'].cumsum().values
     x = np.arange(len(y))
+    # 避免全部是 0 的情況導致除以零
+    if np.std(y) == 0: return 0 
+    
     correlation_matrix = np.corrcoef(x, y)
+    if np.isnan(correlation_matrix).any(): return 0
+    
     correlation_xy = correlation_matrix[0, 1]
     r_squared = correlation_xy ** 2
     return r_squared
@@ -101,7 +112,8 @@ def calculate_kpis(df):
     avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
     payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
     
-    expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
+    # 避免 Risk 為 0 導致期望值無限大
+    expectancy_custom = (total_pnl / total_risk) if total_risk > 0 else 0
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
     
     if payoff_ratio > 0:
@@ -112,8 +124,12 @@ def calculate_kpis(df):
     max_win, max_loss = calculate_streaks(df)
     r_sq = calculate_r_squared(df)
     
+    # SQN 計算
     r_std = df['R'].std()
-    sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
+    if r_std > 0:
+        sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) 
+    else:
+        sqn = 0
     
     return {
         "Total Trades": total_trades,
@@ -132,12 +148,10 @@ def calculate_kpis(df):
 def generate_calendar_html(year, month, pnl_dict):
     """
     生成 HTML 格式的月曆
-    修正：移除縮排避免 Markdown 解析錯誤
     """
     cal = calendar.Calendar(firstweekday=6) # 星期日開始
     month_days = cal.monthdayscalendar(year, month)
     
-    # CSS
     html = f"""
 <style>
     .cal-container {{ font-family: "Source Sans Pro", sans-serif; width: 100%; }}
@@ -169,14 +183,18 @@ def generate_calendar_html(year, month, pnl_dict):
                 html += "<td class='cal-td' style='background-color: #fafafa;'></td>"
                 continue
             
-            # 使用標準 YYYY-MM-DD 字串當作 Key
+            # 使用字串 key 確保精確對應
             date_key = f"{year}-{month:02d}-{day:02d}"
+            
+            # 取得該日損益 (預設為 0)
             day_pnl = pnl_dict.get(date_key, 0)
             has_trade = date_key in pnl_dict
             
             bg_class = "neutral-bg"
             pnl_text = ""
+            
             if has_trade:
+                # 即使 PnL 是 0，如果有交易紀錄，也顯示 $0
                 if day_pnl > 0:
                     bg_class = "win-bg"
                     pnl_text = f"+${day_pnl:,.0f}"
@@ -240,8 +258,12 @@ def display_expectancy_lab(xls):
         with k2:
             kelly_frac = st.selectbox("凱利倍數", [1.0, 0.5, 0.25, 0.1], index=2, 
                                      format_func=lambda x: f"Full ({x})" if x==1 else f"Fractional ({x})")
-        adj_kelly = max(0, kpi['Full Kelly'] * kelly_frac)
+        
+        # 簡易防呆，避免 Kelly 為負值時報錯
+        base_kelly = max(0, kpi['Full Kelly'])
+        adj_kelly = base_kelly * kelly_frac
         risk_amt = capital * adj_kelly
+        
         k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
         k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
 
@@ -250,24 +272,24 @@ def display_expectancy_lab(xls):
     # --- 月曆儀表板 ---
     st.markdown("#### 📅 交易月曆 (Monthly Performance)")
     
-    # [修正重點 3] 確保日期字串化邏輯與日曆生成器完全一致
-    # 使用 .dt.strftime('%Y-%m-%d') 強制轉換
+    # [關鍵] 使用 strftime 確保日期格式與日曆迴圈一致
     df['DateStr'] = df['Date'].dt.strftime('%Y-%m-%d')
+    
+    # 每日損益加總 (處理同一天多筆交易)
     daily_pnl_series = df.groupby('DateStr')['PnL'].sum()
     pnl_dict = daily_pnl_series.to_dict()
     
-    # 產生月份選單 (使用 drop_duplicates 確保 Series 格式)
+    # 產生不重複月份並排序
     unique_months = df['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
     
     if len(unique_months) > 0:
         sel_col, _ = st.columns([1, 4]) 
         with sel_col:
-            # 加入 Key 防止狀態重置
             selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
         
         y, m = selected_period.year, selected_period.month
         
-        # 篩選當月資料 (使用字串前綴匹配，最穩定)
+        # 篩選當月數據
         month_prefix = f"{y}-{m:02d}"
         month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
         
@@ -282,8 +304,14 @@ def display_expectancy_lab(xls):
             st.markdown("##### 當月統計")
             
             m_pnl = month_data.sum()
-            m_max_win = month_data.max() if not month_data.empty and month_data.max() > 0 else 0
-            m_max_loss = month_data.min() if not month_data.empty and month_data.min() < 0 else 0
+            # 只有在有數據時才計算 max/min，避免報錯
+            if not month_data.empty:
+                m_max_win = month_data[month_data > 0].max() if (month_data > 0).any() else 0
+                m_max_loss = month_data[month_data < 0].min() if (month_data < 0).any() else 0
+            else:
+                m_max_win = 0
+                m_max_loss = 0
+                
             m_win_days = (month_data > 0).sum()
             m_loss_days = (month_data < 0).sum()
             
