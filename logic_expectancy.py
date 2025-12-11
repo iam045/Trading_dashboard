@@ -15,24 +15,22 @@ def clean_numeric(series):
     return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
 
 def get_expectancy_data(xls):
-    """資料源 A: 讀取 '期望值' 分頁 (用於計算長期 KPI)"""
+    """資料源 A: 讀取 '期望值' 分頁"""
     target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
     if not target_sheet:
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
-        # 假設標題在第15列 -> header=14
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
         if df.shape[1] < 14:
             return None, "期望值表格欄位不足 14 欄，請檢查格式。"
 
-        # 欄位選取：日期(0), 策略(1), 最後總風險(10), 損益(11), R(13)
         df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
         df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
 
-        df_clean['Date'] = df_clean['Date'].ffill() # 處理日期空白
-        df_clean = df_clean.dropna(subset=['Strategy']) # 過濾小計行
+        df_clean['Date'] = df_clean['Date'].ffill() 
+        df_clean = df_clean.dropna(subset=['Strategy']) 
         df_clean = df_clean.dropna(subset=['Date'])
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').dt.normalize()
         
@@ -51,10 +49,8 @@ def get_expectancy_data(xls):
 def get_daily_report_data(xls):
     """
     資料源 B: 讀取 '所有' 含有 '日報表' 的分頁
-    修改重點：不再只讀取最後一張表，而是讀取所有符合條件的表並合併
     """
     sheet_names = xls.sheet_names
-    # 找出所有包含 "日報表" 的分頁名稱
     daily_sheets = [s for s in sheet_names if "日報表" in s]
     
     if not daily_sheets:
@@ -63,47 +59,38 @@ def get_daily_report_data(xls):
     all_dfs = []
     error_msg = ""
     
-    # --- 迴圈讀取每一張日報表 ---
     for sheet in daily_sheets:
         try:
-            # 依據您的檔案結構，標題在第 5 列 (header=4)
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
-            
-            # 檢查欄位數是否足夠
-            if df.shape[1] < 8:
-                continue # 跳過格式不對的分頁
+            if df.shape[1] < 8: continue 
                 
-            # 鎖定 A欄 (Date) 和 H欄 (Daily PnL)
             df_cal = df.iloc[:, [0, 7]].copy() 
             df_cal.columns = ['Date', 'DayPnL']
             
-            # 清洗數據
             df_cal = df_cal.dropna(subset=['Date'])
             df_cal['Date'] = pd.to_datetime(df_cal['Date'], errors='coerce')
-            df_cal = df_cal.dropna(subset=['Date']) # 再次過濾轉型失敗的
+            df_cal = df_cal.dropna(subset=['Date'])
             df_cal['Date'] = df_cal['Date'].dt.normalize()
             
             df_cal['DayPnL'] = clean_numeric(df_cal['DayPnL'])
             df_cal = df_cal.fillna(0)
             
-            # 將處理好的這張表加入列表
             all_dfs.append(df_cal)
             
         except Exception as e:
-            error_msg += f"讀取 {sheet} 失敗: {e}; "
+            error_msg += f"讀取 {sheet} 失敗; "
             continue
 
     if not all_dfs:
-        return None, f"無法讀取任何有效的日報表數據。{error_msg}", str(daily_sheets)
+        return None, f"無法讀取任何有效的日報表數據。{error_msg}", "無資料"
 
-    # --- 合併所有日報表資料 ---
     final_df = pd.concat(all_dfs, ignore_index=True)
-    
-    # 排序並移除重複日期 (假設同一天在不同表都有紀錄，這裡簡單處理為保留最後一筆，或不做去重直接加總)
-    # 這裡我們先單純排序
     final_df = final_df.sort_values('Date')
     
-    return final_df, None, f"共 {len(daily_sheets)} 張日報表 ({', '.join(daily_sheets)})"
+    # --- 修改點 1: 簡化回傳的資訊字串，避免標題過長 ---
+    info_str = f"共 {len(daily_sheets)} 個月份資料"
+    
+    return final_df, None, info_str
 
 def calculate_streaks(df):
     pnl = df['PnL'].values
@@ -128,8 +115,7 @@ def calculate_r_squared(df):
     x = np.arange(len(y))
     if len(x) != len(y): return 0
     correlation_matrix = np.corrcoef(x, y)
-    correlation_xy = correlation_matrix[0, 1]
-    r_squared = correlation_xy ** 2
+    r_squared = correlation_matrix[0, 1] ** 2
     return r_squared
 
 def calculate_kpis(df):
@@ -186,7 +172,6 @@ def generate_calendar_html(year, month, pnl_dict):
             date_key = f"{year}-{month:02d}-{day:02d}"
             day_pnl = pnl_dict.get(date_key, 0)
             
-            # 只有當該日期在字典中且損益不為0時，才視為有交易
             has_trade = (date_key in pnl_dict) and (day_pnl != 0)
             
             bg_class = "neutral-bg"
@@ -210,23 +195,17 @@ def generate_calendar_html(year, month, pnl_dict):
 # ==========================================
 
 def display_expectancy_lab(xls):
-    # 1. 讀取 KPI 資料 (來源：期望值分頁)
     df_kpi, err_kpi = get_expectancy_data(xls)
-    
-    # 2. 讀取 日曆 資料 (來源：所有日報表分頁)
     df_cal, err_cal, sheet_info_cal = get_daily_report_data(xls)
 
-    # 錯誤處理
     if err_kpi:
         st.warning(f"⚠️ KPI 資料讀取警示: {err_kpi}")
     if df_kpi is None or df_kpi.empty:
         st.info("尚未有足夠的交易紀錄可供分析 KPI。")
         return
 
-    # 計算 KPI
     kpi = calculate_kpis(df_kpi)
     
-    # --- Row 1: KPI ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
@@ -237,7 +216,6 @@ def display_expectancy_lab(xls):
     c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
     st.markdown("---")
     
-    # --- Row 2: KPI ---
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
@@ -247,7 +225,6 @@ def display_expectancy_lab(xls):
     d5.empty()
     st.markdown("---")
 
-    # --- 資金管理 ---
     with st.expander("🎰 資金管理控制台 (Kelly Criterion)", expanded=True):
         k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
         with k1: capital = st.number_input("目前本金", value=300000, step=10000)
@@ -258,36 +235,35 @@ def display_expectancy_lab(xls):
         k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
     st.markdown("---")
 
-    # --- 月曆儀表板 (使用日報表資料) ---
+    # --- 月曆儀表板 ---
+    # 這裡顯示簡化後的資訊，例如 "交易月曆 (資料來源: 共 67 個月份資料)"
     st.markdown(f"#### 📅 交易月曆 (資料來源: {sheet_info_cal})")
     
     if df_cal is not None and not df_cal.empty:
-        # 轉換為字典 { 'YYYY-MM-DD': 損益 }
         df_cal['DateStr'] = df_cal['Date'].dt.strftime('%Y-%m-%d')
-        # 如果同一天有多筆(例如不同分頁或多策略)，加總起來
         daily_pnl_series = df_cal.groupby('DateStr')['DayPnL'].sum()
         pnl_dict = daily_pnl_series.to_dict()
         
-        # 取得資料中存在的月份 (因為合併了所有分頁，這裡會自動出現所有月份)
+        # 1. 先取得所有月份 (由新到舊排序)
         unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
         
+        # --- 修改點 2: 限制只取前 2 個月 ---
+        if len(unique_months) > 2:
+            unique_months = unique_months[:2]
+
         if len(unique_months) > 0:
             sel_col, _ = st.columns([1, 4]) 
             with sel_col:
-                # 這裡的 unique_months 現在會包含 11月 和 12月 (如果 Excel 裡都有的話)
                 selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
             
             y, m = selected_period.year, selected_period.month
             
-            # 統計當月數據
             month_prefix = f"{y}-{m:02d}"
-            # 從總表中篩選出選定月份的數據
             month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
             
             cal_col, stat_col = st.columns([3, 1])
             with cal_col:
                 st.markdown(f"**{selected_period.strftime('%B %Y')}**")
-                # 傳入來自所有日報表的 pnl_dict
                 cal_html = generate_calendar_html(y, m, pnl_dict)
                 st.markdown(cal_html, unsafe_allow_html=True)
                 
