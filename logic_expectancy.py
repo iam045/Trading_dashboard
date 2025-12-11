@@ -116,8 +116,7 @@ def inject_custom_css():
 def clean_numeric(series):
     return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
 
-# [優化] 加入快取，TTL 設定為 1 小時 (3600秒)
-@st.cache_data(ttl=3600) 
+# [修正] 移除 @st.cache_data 以修復 UnhashableParamError
 def get_expectancy_data(xls):
     target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
     if not target_sheet: return None, "找不到含有 '期望值' 的分頁"
@@ -135,8 +134,7 @@ def get_expectancy_data(xls):
         return df_clean.sort_values('Date'), None
     except Exception as e: return None, f"讀取期望值失敗: {e}"
 
-# [優化] 加入快取
-@st.cache_data(ttl=3600)
+# [修正] 移除 @st.cache_data 以修復 UnhashableParamError
 def get_daily_report_data(xls):
     sheet_names = xls.sheet_names
     daily_sheets = [s for s in sheet_names if "日報表" in s]
