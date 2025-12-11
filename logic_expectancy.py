@@ -2,26 +2,26 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import calendar
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ==========================================
 # 1. 基礎運算與資料讀取 (Helper Functions)
 # ==========================================
 
 def clean_numeric(series):
-    """清洗數字格式 (移除逗號、轉型)"""
     return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
 
 def get_expectancy_data(xls):
-    """資料源 A: 讀取 '期望值' 分頁"""
     target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
     if not target_sheet:
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
-        
         if df.shape[1] < 14:
-            return None, "期望值表格欄位不足 14 欄，請檢查格式。"
+            return None, "期望值表格欄位不足 14 欄"
 
         df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
         df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
@@ -44,19 +44,13 @@ def get_expectancy_data(xls):
         return None, f"讀取期望值失敗: {e}"
 
 def get_daily_report_data(xls):
-    """
-    資料源 B: 讀取 '含有 日報表' 的分頁 (僅讀取最新 2 個月)
-    """
     sheet_names = xls.sheet_names
     daily_sheets = [s for s in sheet_names if "日報表" in s]
     
     if not daily_sheets:
         return None, "找不到含有 '日報表' 的分頁", "無"
     
-    # 倒序排列，確保最新的月份在前
     daily_sheets.sort(reverse=True)
-    
-    # 只取前 2 張表 (即最新的兩個月)
     target_sheets = daily_sheets[:2]
     
     all_dfs = []
@@ -85,11 +79,10 @@ def get_daily_report_data(xls):
             continue
 
     if not all_dfs:
-        return None, f"無法讀取任何有效的日報表數據。{error_msg}", "無資料"
+        return None, f"無法讀取有效日報表數據。{error_msg}", "無資料"
 
     final_df = pd.concat(all_dfs, ignore_index=True)
     final_df = final_df.sort_values('Date')
-    
     info_str = f"僅讀取最新 2 個月: {', '.join(target_sheets)}"
     
     return final_df, None, info_str
@@ -193,105 +186,197 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. UI 顯示邏輯 (Fragment 局部刷新區塊)
+# 2. 進階計算：趨勢分析
+# ==========================================
+
+def calculate_daily_trends(df):
+    """
+    計算每日累計的 KPI 變化 (期望值, 獲利因子, 盈虧比, R平方)
+    """
+    df = df.sort_values('Date')
+    dates = df['Date'].unique()
+    
+    trend_data = []
+    
+    # 為了效能，我們使用累計加總的方式計算，而不是迴圈切片
+    # 但 R平方 需要每次重算，所以我們做一個折衷：按日迭代
+    
+    # 先預計算需要的欄位
+    df['is_win'] = df['PnL'] > 0
+    df['gross_win'] = df['PnL'].apply(lambda x: x if x > 0 else 0)
+    df['gross_loss'] = df['PnL'].apply(lambda x: abs(x) if x <= 0 else 0)
+    
+    cum_pnl = 0
+    cum_risk = 0
+    cum_gross_win = 0
+    cum_gross_loss = 0
+    cum_win_count = 0
+    cum_loss_count = 0
+    cum_R_list = []
+    
+    for date in dates:
+        day_data = df[df['Date'] == date]
+        
+        # 更新累計數據
+        cum_pnl += day_data['PnL'].sum()
+        cum_risk += day_data['Risk_Amount'].sum()
+        cum_gross_win += day_data['gross_win'].sum()
+        cum_gross_loss += day_data['gross_loss'].sum()
+        cum_win_count += day_data['is_win'].sum()
+        cum_loss_count += (day_data['PnL'] <= 0).sum()
+        
+        # R squared 需要歷史序列
+        cum_R_list.extend(day_data['R'].tolist())
+        
+        # --- 計算當下 KPI ---
+        
+        # 1. 期望值
+        expectancy = cum_pnl / cum_risk if cum_risk > 0 else 0
+        
+        # 2. 獲利因子
+        pf = cum_gross_win / cum_gross_loss if cum_gross_loss > 0 else float('inf')
+        # 避免無限大破壞圖表，設個上限
+        pf = min(pf, 10) 
+        
+        # 3. 盈虧比
+        avg_win = cum_gross_win / cum_win_count if cum_win_count > 0 else 0
+        avg_loss = cum_gross_loss / cum_loss_count if cum_loss_count > 0 else 0
+        payoff = avg_win / avg_loss if avg_loss > 0 else 0
+        
+        # 4. R Squared
+        r_sq = 0
+        if len(cum_R_list) > 1:
+            y = np.cumsum(cum_R_list)
+            x = np.arange(len(y))
+            if len(x) == len(y):
+                r_sq = np.corrcoef(x, y)[0, 1] ** 2
+        
+        trend_data.append({
+            'Date': date,
+            'Expectancy': expectancy,
+            'Profit Factor': pf,
+            'Payoff Ratio': payoff,
+            'R Squared': r_sq
+        })
+        
+    return pd.DataFrame(trend_data)
+
+# ==========================================
+# 3. UI 顯示邏輯 (Fragment 局部刷新區塊)
 # ==========================================
 
 @st.fragment
 def draw_kelly_fragment(kpi):
-    # --- 移除標題 ---
-    
     k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
     with k1: 
         capital = st.number_input("目前本金", value=300000, step=10000)
-    
     with k2: 
-        # 設定選項：1/5 到 1/8
         fraction_options = [1/5, 1/6, 1/7, 1/8]
-        # 預設索引：1/7 是列表中的第 3 個 (index 2)
-        default_idx = 2 
-        
         kelly_frac = st.selectbox(
-            "凱利倍數", 
-            fraction_options, 
-            index=default_idx, 
+            "凱利倍數", fraction_options, index=2, 
             format_func=lambda x: f"1/{int(1/x)} Kelly"
         )
-    
-    # 計算邏輯
     full_kelly_val = kpi.get('Full Kelly', 0)
     adj_kelly = max(0, full_kelly_val * kelly_frac)
     risk_amt = capital * adj_kelly
     
     k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
     k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
-    
     st.markdown("---") 
 
 @st.fragment
-def draw_calendar_fragment(df_cal, sheet_info_cal):
-    # --- 移除標題 ---
+def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
+    """
+    底部區塊：包含 [交易日曆] 與 [趨勢分析] 兩個分頁
+    df_cal: 日報表資料 (用於日曆)
+    df_kpi: 詳細交易資料 (用於畫趨勢圖)
+    """
+    # 建立分頁
+    tab1, tab2 = st.tabs(["📅 交易日曆", "📈 趨勢分析"])
     
-    if df_cal is not None and not df_cal.empty:
-        df_cal['DateStr'] = df_cal['Date'].dt.strftime('%Y-%m-%d')
-        daily_pnl_series = df_cal.groupby('DateStr')['DayPnL'].sum()
-        pnl_dict = daily_pnl_series.to_dict()
-        
-        # 取得月份選單
-        unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
-        
-        if len(unique_months) > 0:
-            sel_col, _ = st.columns([1, 4]) 
-            with sel_col:
-                selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
+    # --- Tab 1: 原本的日曆 ---
+    with tab1:
+        if df_cal is not None and not df_cal.empty:
+            df_cal['DateStr'] = df_cal['Date'].dt.strftime('%Y-%m-%d')
+            daily_pnl_series = df_cal.groupby('DateStr')['DayPnL'].sum()
+            pnl_dict = daily_pnl_series.to_dict()
+            unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
             
-            y, m = selected_period.year, selected_period.month
-            
-            month_prefix = f"{y}-{m:02d}"
-            month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
-            
-            cal_col, stat_col = st.columns([3, 1])
-            with cal_col:
-                # 這裡的月份顯示 (例如 December 2025) 我保留著，作為日曆的標籤，若要移除也可告知
-                st.markdown(f"**{selected_period.strftime('%B %Y')}**")
-                cal_html = generate_calendar_html(y, m, pnl_dict)
-                st.markdown(cal_html, unsafe_allow_html=True)
+            if len(unique_months) > 0:
+                sel_col, _ = st.columns([1, 4]) 
+                with sel_col:
+                    selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
                 
-            with stat_col:
-                # --- 移除標題 "當月統計" ---
+                y, m = selected_period.year, selected_period.month
+                month_prefix = f"{y}-{m:02d}"
+                month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
                 
-                m_pnl = month_data.sum()
-                m_max_win = month_data.max() if not month_data.empty and month_data.max() > 0 else 0
-                m_max_loss = month_data.min() if not month_data.empty and month_data.min() < 0 else 0
-                m_win_days = (month_data > 0).sum()
-                m_loss_days = (month_data < 0).sum()
-                
-                # 計算月勝率
-                total_days = m_win_days + m_loss_days
-                m_win_rate = m_win_days / total_days if total_days > 0 else 0
-                
-                with st.container():
-                    st.metric("月損益", f"${m_pnl:,.0f}", delta="本月成果")
-                    st.divider()
-                    st.metric("單日最大賺", f"${m_max_win:,.0f}", delta_color="normal")
-                    st.metric("單日最大賠", f"${m_max_loss:,.0f}", delta_color="inverse")
+                cal_col, stat_col = st.columns([3, 1])
+                with cal_col:
+                    st.markdown(f"**{selected_period.strftime('%B %Y')}**")
+                    cal_html = generate_calendar_html(y, m, pnl_dict)
+                    st.markdown(cal_html, unsafe_allow_html=True)
                     
-                    st.metric("月勝率", f"{m_win_rate:.1%}", help="計算方式: 獲利天數 / 總交易天數")
+                with stat_col:
+                    m_pnl = month_data.sum()
+                    m_max_win = month_data.max() if not month_data.empty and month_data.max() > 0 else 0
+                    m_max_loss = month_data.min() if not month_data.empty and month_data.min() < 0 else 0
+                    m_win_days = (month_data > 0).sum()
+                    m_loss_days = (month_data < 0).sum()
+                    total_days = m_win_days + m_loss_days
+                    m_win_rate = m_win_days / total_days if total_days > 0 else 0
                     
-                    st.divider()
-                    st.write(f"📈 獲利天數: **{m_win_days}**")
-                    st.write(f"📉 虧損天數: **{m_loss_days}**")
+                    with st.container():
+                        st.metric("月損益", f"${m_pnl:,.0f}", delta="本月成果")
+                        st.divider()
+                        st.metric("單日最大賺", f"${m_max_win:,.0f}", delta_color="normal")
+                        st.metric("單日最大賠", f"${m_max_loss:,.0f}", delta_color="inverse")
+                        st.metric("月勝率", f"{m_win_rate:.1%}", help="計算方式: 獲利天數 / 總交易天數")
+                        st.divider()
+                        st.write(f"📈 獲利天數: **{m_win_days}**")
+                        st.write(f"📉 虧損天數: **{m_loss_days}**")
+            else:
+                st.info("讀取的資料中無有效月份。")
         else:
-            st.info("讀取的資料中無有效月份。")
-    else:
-        st.warning("⚠️ 無法讀取日報表資料，請確認檔案。")
+            st.warning("⚠️ 無法讀取日報表資料，請確認檔案。")
+
+    # --- Tab 2: 新增的趨勢圖表 ---
+    with tab2:
+        if df_kpi is not None and not df_kpi.empty:
+            # 計算趨勢
+            df_trends = calculate_daily_trends(df_kpi)
+            
+            # 使用 Plotly Subplots 畫 2x2 的圖
+            fig = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=("期望值 (Expectancy)", "獲利因子 (Profit Factor)", "盈虧比 (Payoff Ratio)", "穩定度 (R Squared)"),
+                vertical_spacing=0.15
+            )
+
+            # 1. Expectancy
+            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Expectancy'], mode='lines', name='Exp', line=dict(color='#636EFA', width=2)), row=1, col=1)
+            # 2. Profit Factor
+            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Profit Factor'], mode='lines', name='PF', line=dict(color='#00CC96', width=2)), row=1, col=2)
+            # 3. Payoff Ratio
+            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['Payoff Ratio'], mode='lines', name='Payoff', line=dict(color='#EF553B', width=2)), row=2, col=1)
+            # 4. R Squared
+            fig.add_trace(go.Scatter(x=df_trends['Date'], y=df_trends['R Squared'], mode='lines', name='R²', line=dict(color='#AB63FA', width=2)), row=2, col=2)
+
+            # 樣式調整
+            fig.update_layout(height=500, showlegend=False, margin=dict(l=20, r=20, t=40, b=20))
+            fig.update_xaxes(showgrid=False)
+            fig.update_yaxes(showgrid=True, gridcolor='#eee')
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("無足夠交易數據可繪製趨勢圖。")
 
 # ==========================================
-# 3. 主程式進入點
+# 4. 主程式進入點
 # ==========================================
 
 def display_expectancy_lab(xls):
     df_kpi, err_kpi = get_expectancy_data(xls)
-    
     # 讀取日報表 (只讀最新2個月)
     df_cal, err_cal, sheet_info_cal = get_daily_report_data(xls)
 
@@ -303,15 +388,11 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df_kpi)
     
-    # --- 移除標題 "系統體檢報告" ---
-    
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}", help="所有交易的淨損益總和")
     c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", help="公式: 總損益 / 總風險金額。\n意義: 每投入 1 元風險，預期能賺回多少元 (R)。")
-    
     pf = kpi['Profit Factor']
     c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta=">1.5 佳" if pf>1.5 else None, help="公式: 總獲利金額 / 總虧損金額。\n意義: 衡量獲利效率，數值越大代表用越少的虧損換取獲利。")
-    
     c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}", help="公式: 平均獲利 / 平均虧損。\n意義: 賺錢時賺多少 v.s. 賠錢時賠多少的比例。")
     c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%", help="公式: 獲利筆數 / 總交易筆數。")
     st.markdown("---")
@@ -320,14 +401,12 @@ def display_expectancy_lab(xls):
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆", help="系統回測的總樣本數")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal", help="連續獲利的最高次數")
     d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse", help="連續虧損的最高次數 (Drawdown 風險指標)")
-    
     r2 = kpi['R Squared']
     d4.metric("曲線穩定度 (R²)", f"{r2:.2f}", help="公式: 資金曲線與 45度直線 的相關係數平方。\n意義: 0~1 之間，越接近 1 代表資金成長越平滑穩定，非大起大落。")
     d5.empty()
     st.markdown("---")
 
-    # --- 2. 資金管理區 (局部刷新 Fragment) ---
     draw_kelly_fragment(kpi)
 
-    # --- 3. 交易日曆區 (局部刷新 Fragment) ---
-    draw_calendar_fragment(df_cal, sheet_info_cal)
+    # 傳入 df_kpi 供 Tab 2 畫圖使用
+    draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi)
