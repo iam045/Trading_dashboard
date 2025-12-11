@@ -14,7 +14,6 @@ def get_expectancy_data(xls):
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
-        # 讀取資料 (標題在第15列 -> header=14)
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
         if df.shape[1] < 14:
@@ -39,36 +38,90 @@ def get_expectancy_data(xls):
     except Exception as e:
         return None, f"讀取失敗: {e}"
 
-def calculate_kpis(df):
+def calculate_streaks(df):
+    """計算最大連勝與連敗"""
+    pnl = df['PnL'].values
+    max_win_streak = 0
+    max_loss_streak = 0
+    curr_win = 0
+    curr_loss = 0
+    
+    for val in pnl:
+        if val > 0:
+            curr_win += 1
+            curr_loss = 0
+            if curr_win > max_win_streak: max_win_streak = curr_win
+        elif val <= 0:
+            curr_loss += 1
+            curr_win = 0
+            if curr_loss > max_loss_streak: max_loss_streak = curr_loss
+            
+    return max_win_streak, max_loss_streak
+
+def calculate_r_squared(df):
+    """計算權益曲線的平滑度 (R-Squared)"""
+    # 建立累計 R 曲線
+    y = df['R'].cumsum().values
+    x = np.arange(len(y))
+    
+    # 簡單線性回歸計算相關係數
+    if len(y) < 2: return 0
+    correlation_matrix = np.corrcoef(x, y)
+    correlation_xy = correlation_matrix[0, 1]
+    r_squared = correlation_xy ** 2
+    return r_squared
+
+def calculate_kpis(df, capital, kelly_fraction):
     total_trades = len(df)
     if total_trades == 0: return None
     
     wins = df[df['PnL'] > 0]
     losses = df[df['PnL'] <= 0]
     
+    # 1. 基礎數據
     gross_profit = wins['PnL'].sum()
     gross_loss = abs(losses['PnL'].sum())
     total_pnl = df['PnL'].sum()
     total_risk = df['Risk_Amount'].sum()
     
-    # 核心指標計算
+    # 2. 勝率 & 賺賠比
     win_rate = len(wins) / total_trades
-    
     avg_win = wins['PnL'].mean() if len(wins) > 0 else 0
     avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
     payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
     
+    # 3. 期望值與因子
     expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    
+    # 4. 凱利公式 (Kelly Criterion)
+    # 完整凱利 % = W - (1-W)/R
+    if payoff_ratio > 0:
+        full_kelly = win_rate - (1 - win_rate) / payoff_ratio
+    else:
+        full_kelly = 0
+    
+    # 調整後凱利 (User 設定的比例，如 1/7)
+    adj_kelly_pct = max(0, full_kelly * kelly_fraction) # 負數歸零
+    kelly_suggested_risk = capital * adj_kelly_pct
+
+    # 5. 進階數據 (連勝連敗、穩定度)
+    max_win, max_loss = calculate_streaks(df)
+    r_sq = calculate_r_squared(df)
     
     return {
         "Total Trades": total_trades,
         "Total PnL": total_pnl,
-        "Total Risk": total_risk,
         "Win Rate": win_rate,
         "Payoff Ratio": payoff_ratio,
         "Expectancy Custom": expectancy_custom,
-        "Profit Factor": profit_factor
+        "Profit Factor": profit_factor,
+        "Max Win Streak": max_win,
+        "Max Loss Streak": max_loss,
+        "R Squared": r_sq,
+        "Full Kelly": full_kelly,
+        "Adj Kelly Pct": adj_kelly_pct,
+        "Kelly Risk $": kelly_suggested_risk
     }
 
 def display_expectancy_lab(xls):
@@ -81,43 +134,58 @@ def display_expectancy_lab(xls):
         st.info("尚未有足夠的交易紀錄可供分析。")
         return
 
-    kpi = calculate_kpis(df)
+    # --- 用戶輸入區 ---
+    with st.expander("⚙️ 參數設定 (凱利公式與本金)", expanded=False):
+        c1, c2 = st.columns(2)
+        capital = c1.number_input("目前本金 (NTD)", value=300000, step=10000)
+        kelly_frac_input = c2.selectbox("凱利下注比例", 
+                                  options=[1/1, 1/2, 1/4, 1/7, 1/10], 
+                                  format_func=lambda x: "全凱利 (Full)" if x==1 else f"1/{int(1/x)} 凱利",
+                                  index=3) # 預設選第4個 (1/7)
+
+    kpi = calculate_kpis(df, capital, kelly_frac_input)
     
     # --- 儀表板顯示 ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     
-    # 第一排：核心數據
+    # 第一排：核心生存指標
     k1, k2, k3, k4 = st.columns(4)
+    k1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     
-    k1.metric("總交易次數", f"{kpi['Total Trades']} 筆", 
-              help="統計期間內的有效交易總筆數。")
-    
-    k2.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}", 
-              help="所有交易的淨損益加總。")
-    
-    # 獲利因子 (PF)
+    # 獲利因子
     pf = kpi['Profit Factor']
-    pf_color = "normal"
-    if pf < 1: pf_color = "inverse" 
-    k3.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 為佳", delta_color="off",
-              help="定義：總獲利金額 / 總虧損金額。\n意義：衡量生意的划算程度，大於 1 代表賺錢，大於 1.5 代表系統穩健。")
+    pf_col = "normal"
+    if pf < 1: pf_col = "inverse"
+    k2.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 為佳", delta_color="off", help="總獲利 / 總虧損")
 
-    # 期望值 (往前移)
-    k4.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", 
-              help=f"定義：總損益 / 總風險(含成本)。\n意義：代表你每投入 1 塊錢風險，平均能帶回多少淨利。\n(數值越高，代表資金運用效率越好)")
+    # 期望值
+    k3.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", help="總損益 / 含成本總風險")
+    
+    # 穩定度 (R-Squared)
+    r2 = kpi['R Squared']
+    r2_msg = "波動大"
+    if r2 > 0.9: r2_msg = "極穩"; 
+    elif r2 > 0.8: r2_msg = "平穩"
+    k4.metric("曲線穩定度 (R²)", f"{r2:.2f}", delta=r2_msg, delta_color="off", help="越接近 1.0 代表獲利曲線越平滑穩定，非運氣致富。")
 
-    # 第二排：系統結構
+    # 第二排：結構與連鎖
     j1, j2, j3, j4 = st.columns(4)
+    j1.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    j2.metric("賺賠比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
+    j3.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
+    j4.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse", help="歷史上最慘曾經連續輸幾次。")
+
+    st.markdown("---")
     
-    j1.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%",
-              help="定義：賺錢筆數 / 總筆數。\n意義：代表出手的準確度。")
-    
-    j2.metric("賺賠比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}",
-              help="定義：平均獲利金額 / 平均虧損金額。\n意義：代表贏一次的錢，夠你輸幾次。")
-    
-    # 這裡留空或未來放其他指標
-    j3.write("") 
-    j4.write("")
+    # 第三排：凱利公式建議 (重點區)
+    st.markdown(f"#### 🎰 資金管理建議 (基於 {int(1/kelly_frac_input)} 分之一凱利)")
+    if kpi['Full Kelly'] <= 0:
+        st.error(f"❌ 警告：你的期望值為負，凱利公式建議 **停止交易** (建議倉位 0%)。")
+    else:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("建議下注比例 (%)", f"{kpi['Adj Kelly Pct']*100:.2f}%", help=f"依據你的本金 {capital:,} 與勝率賠率計算")
+        m2.metric("建議單筆風險金", f"${kpi['Kelly Risk $']:,.0f}", delta="Risk Size", help="這是你下一筆交易應該冒的風險金額")
+        m3.caption(f"💡 這是基於本金 **${capital:,}** 計算的結果。\n若你目前單筆風險遠大於此，請考慮縮小部位。")
 
     st.markdown("---")
 
@@ -133,6 +201,14 @@ def display_expectancy_lab(xls):
             line=dict(color='#1f77b4', width=2),
             fill='tozeroy', fillcolor='rgba(31, 119, 180, 0.1)'
         ))
+        
+        # 加上趨勢線 (視覺化 R^2)
+        x_nums = np.arange(len(df))
+        if len(x_nums) > 1:
+            z = np.polyfit(x_nums, df['Cumulative R'], 1)
+            p = np.poly1d(z)
+            fig_r.add_trace(go.Scatter(x=df['Date'], y=p(x_nums), mode='lines', name='趨勢線', line=dict(color='gray', dash='dash', width=1)))
+
         fig_r.update_layout(
             margin=dict(t=10, b=10, l=10, r=10),
             xaxis_title="", yaxis_title="累計 R",
