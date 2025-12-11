@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import numpy as np
 import calendar
-import re
 
 # ==========================================
 # 1. 基礎運算與資料讀取 (Helper Functions)
@@ -48,27 +45,23 @@ def get_expectancy_data(xls):
 
 def get_daily_report_data(xls):
     """
-    資料源 B: 讀取 '含有 日報表' 的分頁
-    【效能優化版】: 先篩選並排序 Sheet Name，只讀取最新的 2 個月份，避免讀取數十張表導致卡頓。
+    資料源 B: 讀取 '含有 日報表' 的分頁 (僅讀取最新 2 個月)
     """
     sheet_names = xls.sheet_names
-    # 1. 找出所有名稱含 "日報表" 的
     daily_sheets = [s for s in sheet_names if "日報表" in s]
     
     if not daily_sheets:
         return None, "找不到含有 '日報表' 的分頁", "無"
     
-    # 2. 【關鍵優化】對分頁名稱進行倒序排列 (最新的月份通常字串順序會最大，如 2025-12 > 2025-11)
-    #    這樣我們可以確保 target_sheets[0] 是最新的
+    # 倒序排列，確保最新的月份在前
     daily_sheets.sort(reverse=True)
     
-    # 3. 只取前 2 張表 (即最新的兩個月)
+    # 只取前 2 張表 (即最新的兩個月)
     target_sheets = daily_sheets[:2]
     
     all_dfs = []
     error_msg = ""
     
-    # 4. 只讀取這 2 張表，速度大幅提升
     for sheet in target_sheets:
         try:
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
@@ -97,7 +90,6 @@ def get_daily_report_data(xls):
     final_df = pd.concat(all_dfs, ignore_index=True)
     final_df = final_df.sort_values('Date')
     
-    # 資訊欄位顯示我們實際讀了哪幾張表
     info_str = f"僅讀取最新 2 個月: {', '.join(target_sheets)}"
     
     return final_df, None, info_str
@@ -201,52 +193,12 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. 主顯示邏輯
+# 2. UI 顯示邏輯 (Fragment 優化)
 # ==========================================
 
-def display_expectancy_lab(xls):
-    df_kpi, err_kpi = get_expectancy_data(xls)
-    # 改用優化後的讀取函式，只讀最新的兩個月
-    df_cal, err_cal, sheet_info_cal = get_daily_report_data(xls)
-
-    if err_kpi:
-        st.warning(f"⚠️ KPI 資料讀取警示: {err_kpi}")
-    if df_kpi is None or df_kpi.empty:
-        st.info("尚未有足夠的交易紀錄可供分析 KPI。")
-        return
-
-    kpi = calculate_kpis(df_kpi)
-    
-    st.markdown("### 🏥 系統體檢報告 (System Health)")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
-    c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R")
-    pf = kpi['Profit Factor']
-    c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta=">1.5 佳" if pf>1.5 else None)
-    c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
-    c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
-    st.markdown("---")
-    
-    d1, d2, d3, d4, d5 = st.columns(5)
-    d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
-    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
-    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse")
-    r2 = kpi['R Squared']
-    d4.metric("曲線穩定度 (R²)", f"{r2:.2f}")
-    d5.empty()
-    st.markdown("---")
-
-    with st.expander("🎰 資金管理控制台 (Kelly Criterion)", expanded=True):
-        k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
-        with k1: capital = st.number_input("目前本金", value=300000, step=10000)
-        with k2: kelly_frac = st.selectbox("凱利倍數", [1.0, 0.5, 0.25, 0.1], index=2, format_func=lambda x: f"Full ({x})" if x==1 else f"Fractional ({x})")
-        adj_kelly = max(0, kpi['Full Kelly'] * kelly_frac)
-        risk_amt = capital * adj_kelly
-        k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
-        k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
-    st.markdown("---")
-
-    # --- 月曆儀表板 ---
+# 關鍵優化：使用 @st.fragment 讓這塊區域可以獨立刷新，不影響整頁
+@st.fragment
+def draw_calendar_fragment(df_cal, sheet_info_cal):
     st.markdown(f"#### 📅 交易月曆 ({sheet_info_cal})")
     
     if df_cal is not None and not df_cal.empty:
@@ -254,12 +206,13 @@ def display_expectancy_lab(xls):
         daily_pnl_series = df_cal.groupby('DateStr')['DayPnL'].sum()
         pnl_dict = daily_pnl_series.to_dict()
         
-        # 取得月份選單 (這邊理論上只會有 1~2 個月了)
+        # 取得月份選單
         unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
         
         if len(unique_months) > 0:
             sel_col, _ = st.columns([1, 4]) 
             with sel_col:
+                # 這個 selectbox 改變時，只會重新執行 draw_calendar_fragment 函式
                 selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
             
             y, m = selected_period.year, selected_period.month
@@ -292,4 +245,55 @@ def display_expectancy_lab(xls):
         else:
             st.info("讀取的資料中無有效月份。")
     else:
-        st.warning(f"⚠️ 無法讀取日報表資料，請確認檔案中是否有 '日報表' 分頁且格式正確。錯誤訊息: {err_cal}")
+        st.warning("⚠️ 無法讀取日報表資料，請確認檔案。")
+
+# ==========================================
+# 3. 主程式進入點
+# ==========================================
+
+def display_expectancy_lab(xls):
+    df_kpi, err_kpi = get_expectancy_data(xls)
+    
+    # 讀取日報表 (只讀最新2個月，速度快)
+    df_cal, err_cal, sheet_info_cal = get_daily_report_data(xls)
+
+    if err_kpi:
+        st.warning(f"⚠️ KPI 資料讀取警示: {err_kpi}")
+    if df_kpi is None or df_kpi.empty:
+        st.info("尚未有足夠的交易紀錄可供分析 KPI。")
+        return
+
+    kpi = calculate_kpis(df_kpi)
+    
+    # --- 上半部：靜態顯示區 (不會因為選月份而閃爍) ---
+    st.markdown("### 🏥 系統體檢報告 (System Health)")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
+    c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R")
+    pf = kpi['Profit Factor']
+    c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta=">1.5 佳" if pf>1.5 else None)
+    c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
+    c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    st.markdown("---")
+    
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
+    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
+    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse")
+    r2 = kpi['R Squared']
+    d4.metric("曲線穩定度 (R²)", f"{r2:.2f}")
+    d5.empty()
+    st.markdown("---")
+
+    with st.expander("🎰 資金管理控制台 (Kelly Criterion)", expanded=True):
+        k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
+        with k1: capital = st.number_input("目前本金", value=300000, step=10000)
+        with k2: kelly_frac = st.selectbox("凱利倍數", [1.0, 0.5, 0.25, 0.1], index=2, format_func=lambda x: f"Full ({x})" if x==1 else f"Fractional ({x})")
+        adj_kelly = max(0, kpi['Full Kelly'] * kelly_frac)
+        risk_amt = capital * adj_kelly
+        k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
+        k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
+    st.markdown("---")
+
+    # --- 下半部：日曆互動區 (使用 Fragment 獨立刷新) ---
+    draw_calendar_fragment(df_cal, sheet_info_cal)
