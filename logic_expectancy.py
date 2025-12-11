@@ -265,11 +265,19 @@ def draw_calendar_fragment(df_cal, sheet_info_cal):
                 m_win_days = (month_data > 0).sum()
                 m_loss_days = (month_data < 0).sum()
                 
+                # 計算月勝率
+                total_days = m_win_days + m_loss_days
+                m_win_rate = m_win_days / total_days if total_days > 0 else 0
+                
                 with st.container():
                     st.metric("月損益", f"${m_pnl:,.0f}", delta="本月成果")
                     st.divider()
                     st.metric("單日最大賺", f"${m_max_win:,.0f}", delta_color="normal")
                     st.metric("單日最大賠", f"${m_max_loss:,.0f}", delta_color="inverse")
+                    
+                    # --- 新增: 月勝率 ---
+                    st.metric("月勝率", f"{m_win_rate:.1%}", help="計算方式: 獲利天數 / 總交易天數")
+                    
                     st.divider()
                     st.write(f"📈 獲利天數: **{m_win_days}**")
                     st.write(f"📉 虧損天數: **{m_loss_days}**")
@@ -296,23 +304,26 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df_kpi)
     
-    # --- 1. 系統體檢報告 (靜態) ---
+    # --- 1. 系統體檢報告 (靜態，加入 help 參數) ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
-    c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R")
+    c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}", help="所有交易的淨損益總和")
+    c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", help="公式: 總損益 / 總風險金額。\n意義: 每投入 1 元風險，預期能賺回多少元 (R)。")
+    
     pf = kpi['Profit Factor']
-    c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta=">1.5 佳" if pf>1.5 else None)
-    c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
-    c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta=">1.5 佳" if pf>1.5 else None, help="公式: 總獲利金額 / 總虧損金額。\n意義: 衡量獲利效率，數值越大代表用越少的虧損換取獲利。")
+    
+    c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}", help="公式: 平均獲利 / 平均虧損。\n意義: 賺錢時賺多少 v.s. 賠錢時賠多少的比例。")
+    c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%", help="公式: 獲利筆數 / 總交易筆數。")
     st.markdown("---")
     
     d1, d2, d3, d4, d5 = st.columns(5)
-    d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
-    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
-    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse")
+    d1.metric("總交易次數", f"{kpi['Total Trades']} 筆", help="系統回測的總樣本數")
+    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal", help="連續獲利的最高次數")
+    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse", help="連續虧損的最高次數 (Drawdown 風險指標)")
+    
     r2 = kpi['R Squared']
-    d4.metric("曲線穩定度 (R²)", f"{r2:.2f}")
+    d4.metric("曲線穩定度 (R²)", f"{r2:.2f}", help="公式: 資金曲線與 45度直線 的相關係數平方。\n意義: 0~1 之間，越接近 1 代表資金成長越平滑穩定，非大起大落。")
     d5.empty()
     st.markdown("---")
 
