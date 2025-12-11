@@ -1,15 +1,16 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import re
-from utils import load_google_sheet # 從 utils.py 匯入連線功能
-from logic_yearly import get_yearly_data_and_chart # 從 logic_yearly.py 匯入畫圖功能
+# 引入我們拆分出去的三個模組
+from utils import load_google_sheet 
+from logic_yearly import get_yearly_data_and_chart 
+from logic_expectancy import display_expectancy_lab # 新增這行
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="私募基金戰情室", layout="wide")
 st.title("💰 交易績效戰情室")
 
-# --- 2. 側邊欄或頂端重新整理 ---
+# --- 2. 重新整理按鈕 ---
 if st.button("🔄 重新整理數據"):
     st.cache_resource.clear()
     st.rerun()
@@ -22,12 +23,13 @@ if err_msg:
     st.stop()
 
 # --- 4. 分頁架構 ---
-tab1, tab2, tab3 = st.tabs(["📊 總覽儀表板", "📅 年度戰績回顧", "🧪 期望值實驗室 (New!)"])
+tab1, tab2, tab3 = st.tabs(["📊 總覽儀表板", "📅 年度戰績回顧", "🧪 期望值實驗室"])
 
 # === Tab 1: 總覽 ===
 with tab1:
     if '累積總表' in xls.sheet_names:
         try:
+            # 簡易讀取總表邏輯 (為了保持 app.py 簡潔，這段未來也可以考慮拆出去)
             df_prev = pd.read_excel(xls, '累積總表', header=None, nrows=10)
             h_idx = -1
             for i, row in enumerate(df_prev.values):
@@ -43,7 +45,7 @@ with tab1:
                     st.plotly_chart(px.line(df_total, y=y_col, title="歷史資金成長"), use_container_width=True)
         except: pass
 
-# === Tab 2: 年度回顧 (呼叫 logic_yearly.py) ===
+# === Tab 2: 年度回顧 (由 logic_yearly.py 接管) ===
 with tab2:
     # 自動偵測年份
     detected_years = set()
@@ -56,7 +58,7 @@ with tab2:
     progress_bar = st.progress(0, text="數據載入中...")
     
     for i, year in enumerate(target_years):
-        # 呼叫 logic_yearly 裡的函式
+        # 呼叫 logic_yearly
         result = get_yearly_data_and_chart(xls, year)
         
         if result:
@@ -78,18 +80,7 @@ with tab2:
         progress_bar.progress((i + 1) / len(target_years))
     progress_bar.empty()
 
-# === Tab 3: 期望值 (準備中) ===
+# === Tab 3: 期望值實驗室 (由 logic_expectancy.py 接管) ===
 with tab3:
-    st.header("🧪 期望值紀錄")
-    # 這裡的代碼比較短，暫時留在 app.py，等功能變多再拆出去
-    target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
-    
-    if target_sheet:
-        st.success(f"✅ 找到分頁：{target_sheet}")
-        st.write("請協助提供以下表格的 **欄位名稱** 截圖：")
-        try:
-            df_raw = pd.read_excel(xls, sheet_name=target_sheet, header=None, nrows=10)
-            st.dataframe(df_raw)
-        except: st.error("讀取失敗")
-    else:
-        st.warning("❌ 找不到含有 '期望值' 的分頁")
+    # 呼叫 logic_expectancy
+    display_expectancy_lab(xls)
