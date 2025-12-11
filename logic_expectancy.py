@@ -14,6 +14,7 @@ def get_expectancy_data(xls):
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
+        # 讀取資料 (標題在第15列 -> header=14)
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
         if df.shape[1] < 14:
@@ -60,54 +61,47 @@ def calculate_streaks(df):
 
 def calculate_r_squared(df):
     """計算權益曲線的平滑度 (R-Squared)"""
-    # 建立累計 R 曲線
     y = df['R'].cumsum().values
     x = np.arange(len(y))
-    
-    # 簡單線性回歸計算相關係數
     if len(y) < 2: return 0
     correlation_matrix = np.corrcoef(x, y)
     correlation_xy = correlation_matrix[0, 1]
     r_squared = correlation_xy ** 2
     return r_squared
 
-def calculate_kpis(df, capital, kelly_fraction):
+def calculate_kpis(df):
     total_trades = len(df)
     if total_trades == 0: return None
     
     wins = df[df['PnL'] > 0]
     losses = df[df['PnL'] <= 0]
     
-    # 1. 基礎數據
     gross_profit = wins['PnL'].sum()
     gross_loss = abs(losses['PnL'].sum())
     total_pnl = df['PnL'].sum()
     total_risk = df['Risk_Amount'].sum()
     
-    # 2. 勝率 & 賺賠比
     win_rate = len(wins) / total_trades
     avg_win = wins['PnL'].mean() if len(wins) > 0 else 0
     avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
     payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
     
-    # 3. 期望值與因子
     expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
     
-    # 4. 凱利公式 (Kelly Criterion)
-    # 完整凱利 % = W - (1-W)/R
+    # 凱利公式基礎值 (Full Kelly %)
     if payoff_ratio > 0:
         full_kelly = win_rate - (1 - win_rate) / payoff_ratio
     else:
         full_kelly = 0
-    
-    # 調整後凱利 (User 設定的比例，如 1/7)
-    adj_kelly_pct = max(0, full_kelly * kelly_fraction) # 負數歸零
-    kelly_suggested_risk = capital * adj_kelly_pct
-
-    # 5. 進階數據 (連勝連敗、穩定度)
+        
+    # 進階數據
     max_win, max_loss = calculate_streaks(df)
     r_sq = calculate_r_squared(df)
+    
+    # SQN
+    r_std = df['R'].std()
+    sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
     
     return {
         "Total Trades": total_trades,
@@ -120,8 +114,7 @@ def calculate_kpis(df, capital, kelly_fraction):
         "Max Loss Streak": max_loss,
         "R Squared": r_sq,
         "Full Kelly": full_kelly,
-        "Adj Kelly Pct": adj_kelly_pct,
-        "Kelly Risk $": kelly_suggested_risk
+        "SQN": sqn
     }
 
 def display_expectancy_lab(xls):
@@ -134,67 +127,80 @@ def display_expectancy_lab(xls):
         st.info("尚未有足夠的交易紀錄可供分析。")
         return
 
-    # --- 用戶輸入區 ---
-    with st.expander("⚙️ 參數設定 (凱利公式與本金)", expanded=False):
-        c1, c2 = st.columns(2)
-        capital = c1.number_input("目前本金 (NTD)", value=300000, step=10000)
-        kelly_frac_input = c2.selectbox("凱利下注比例", 
-                                  options=[1/1, 1/2, 1/4, 1/7, 1/10], 
-                                  format_func=lambda x: "全凱利 (Full)" if x==1 else f"1/{int(1/x)} 凱利",
-                                  index=3) # 預設選第4個 (1/7)
-
-    kpi = calculate_kpis(df, capital, kelly_frac_input)
+    kpi = calculate_kpis(df)
     
-    # --- 儀表板顯示 ---
+    # --- 1. 系統體檢報告 (依照要求排序) ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     
-    # 第一排：核心生存指標
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
+    # 第一排：戰績與連續紀錄
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    r1c1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
+    r1c2.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    r1c3.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="🔥 High", delta_color="normal")
+    r1c4.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="❄️ Risk", delta_color="inverse")
+    
+    # 第二排：損益與期望值核心
+    r2c1, r2c2, r2c3, r2c4, r2c5 = st.columns(5)
+    r2c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
+    r2c2.metric("期望值 (Exp R)", f"{kpi['Expectancy Custom']:.2f} R", help="總損益 / 含成本總風險")
+    r2c3.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
     
     # 獲利因子
     pf = kpi['Profit Factor']
-    pf_col = "normal"
-    if pf < 1: pf_col = "inverse"
-    k2.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 為佳", delta_color="off", help="總獲利 / 總虧損")
-
-    # 期望值
-    k3.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", help="總損益 / 含成本總風險")
+    pf_col = "normal" if pf >= 1 else "inverse"
+    r2c4.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 佳", delta_color="off")
     
-    # 穩定度 (R-Squared)
+    # 曲線穩定度 (R^2)
     r2 = kpi['R Squared']
-    r2_msg = "波動大"
-    if r2 > 0.9: r2_msg = "極穩"; 
-    elif r2 > 0.8: r2_msg = "平穩"
-    k4.metric("曲線穩定度 (R²)", f"{r2:.2f}", delta=r2_msg, delta_color="off", help="越接近 1.0 代表獲利曲線越平滑穩定，非運氣致富。")
-
-    # 第二排：結構與連鎖
-    j1, j2, j3, j4 = st.columns(4)
-    j1.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
-    j2.metric("賺賠比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
-    j3.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
-    j4.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse", help="歷史上最慘曾經連續輸幾次。")
+    r2_color = "normal" if r2 > 0.8 else "off"
+    r2c5.metric("曲線穩定度 (R²)", f"{r2:.2f}", delta="越近 1 越穩", delta_color="off")
 
     st.markdown("---")
     
-    # 第三排：凱利公式建議 (重點區)
-    st.markdown(f"#### 🎰 資金管理建議 (基於 {int(1/kelly_frac_input)} 分之一凱利)")
+    # --- 2. 資金管理控制台 (凱利公式 - 合併版) ---
+    st.markdown("#### 🎰 資金管理控制台 (Kelly Strategy)")
+    
+    # 建立一個像控制面板的佈局
+    with st.container():
+        # 用 columns 來並排 "輸入" 與 "結果"
+        c_input1, c_input2, c_arrow, c_res1, c_res2 = st.columns([1.2, 1.2, 0.2, 1.2, 1.5])
+        
+        with c_input1:
+            capital = st.number_input("目前本金 (NTD)", value=300000, step=10000)
+        
+        with c_input2:
+            kelly_frac_input = st.selectbox("凱利倍數", 
+                                  options=[1/1, 1/2, 1/4, 1/7, 1/10], 
+                                  format_func=lambda x: "全凱利 (Full)" if x==1 else f"1/{int(1/x)} 凱利",
+                                  index=3) # 預設 1/7
+
+        # 中間放個箭頭或分隔，視覺上引導
+        with c_arrow:
+            st.markdown("<h3 style='text-align: center; color: gray;'>👉</h3>", unsafe_allow_html=True)
+
+        # 計算結果
+        adj_kelly_pct = max(0, kpi['Full Kelly'] * kelly_frac_input)
+        kelly_risk_money = capital * adj_kelly_pct
+
+        with c_res1:
+            st.metric("建議倉位 %", f"{adj_kelly_pct*100:.2f}%")
+        
+        with c_res2:
+            st.metric("建議單筆風險金", f"${kelly_risk_money:,.0f}", delta="Risk Size")
+
     if kpi['Full Kelly'] <= 0:
-        st.error(f"❌ 警告：你的期望值為負，凱利公式建議 **停止交易** (建議倉位 0%)。")
-    else:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("建議下注比例 (%)", f"{kpi['Adj Kelly Pct']*100:.2f}%", help=f"依據你的本金 {capital:,} 與勝率賠率計算")
-        m2.metric("建議單筆風險金", f"${kpi['Kelly Risk $']:,.0f}", delta="Risk Size", help="這是你下一筆交易應該冒的風險金額")
-        m3.caption(f"💡 這是基於本金 **${capital:,}** 計算的結果。\n若你目前單筆風險遠大於此，請考慮縮小部位。")
+        st.error("❌ 警報：系統期望值為負，凱利公式建議 **停止交易 (0%)**。")
 
     st.markdown("---")
 
-    # --- 圖表區 ---
-    t1, t2 = st.tabs(["📈 權益曲線 (R)", "📊 策略競技場"])
+    # --- 3. 圖表區 ---
+    t1, t2 = st.tabs(["📈 權益曲線 (R) & 穩定度", "📊 策略競技場"])
     
     with t1:
         df['Cumulative R'] = df['R'].cumsum()
         fig_r = go.Figure()
+        
+        # 1. 實際曲線
         fig_r.add_trace(go.Scatter(
             x=df['Date'], y=df['Cumulative R'],
             mode='lines+markers', name='累計 R',
@@ -202,17 +208,38 @@ def display_expectancy_lab(xls):
             fill='tozeroy', fillcolor='rgba(31, 119, 180, 0.1)'
         ))
         
-        # 加上趨勢線 (視覺化 R^2)
+        # 2. 趨勢線 (明顯化：紅色虛線)
         x_nums = np.arange(len(df))
         if len(x_nums) > 1:
             z = np.polyfit(x_nums, df['Cumulative R'], 1)
             p = np.poly1d(z)
-            fig_r.add_trace(go.Scatter(x=df['Date'], y=p(x_nums), mode='lines', name='趨勢線', line=dict(color='gray', dash='dash', width=1)))
+            trend_line = p(x_nums)
+            fig_r.add_trace(go.Scatter(
+                x=df['Date'], y=trend_line, 
+                mode='lines', name='理想趨勢', 
+                line=dict(color='red', dash='dash', width=2)
+            ))
+            
+            # 3. 直接在圖上標註 R平方
+            mid_idx = len(df) // 2
+            mid_date = df['Date'].iloc[mid_idx]
+            max_r = df['Cumulative R'].max()
+            
+            fig_r.add_annotation(
+                x=mid_date, y=max_r,
+                text=f"R² (穩定度) = {kpi['R Squared']:.2f}",
+                showarrow=False,
+                yshift=10,
+                font=dict(size=14, color="red"),
+                bgcolor="rgba(255, 255, 255, 0.8)",
+                bordercolor="red"
+            )
 
         fig_r.update_layout(
             margin=dict(t=10, b=10, l=10, r=10),
             xaxis_title="", yaxis_title="累計 R",
-            height=400, hovermode="x unified", showlegend=False
+            height=400, hovermode="x unified", showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig_r, use_container_width=True)
 
