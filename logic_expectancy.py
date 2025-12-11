@@ -185,16 +185,18 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. 進階計算：趨勢分析 (修正為標準動態滾動邏輯)
+# 2. 進階計算：趨勢分析 (強制筆數索引版)
 # ==========================================
 
 def calculate_trends(df, mode='cumulative', window=50):
     """
     計算每筆交易後的 KPI 變化
-    修正重點：使用 min_periods=1，實現「資料不足時顯示累計，資料足夠時顯示滾動」的混合效果。
     """
-    # 確保依照日期排序，並重置 index 以確保 rolling 依據 index 順序運作
+    # 1. 強制重置索引，確保 Index 是 0, 1, 2, 3... 對應到 第1筆, 第2筆...
+    # 這是最關鍵的一步，排除日期重複造成的干擾
     df = df.sort_values('Date').reset_index(drop=True).copy()
+    
+    # 用於顯示的交易序號 (1-based)
     df['Trade_Num'] = df.index + 1
     
     # 預計算輔助欄位
@@ -203,6 +205,7 @@ def calculate_trends(df, mode='cumulative', window=50):
     df['is_win'] = (df['PnL'] > 0).astype(int)
     df['is_loss'] = (df['PnL'] <= 0).astype(int)
     
+    # 準備計算用的 Series，這裡明確使用 index 進行 rolling
     pnl_series = df['PnL']
     risk_series = df['Risk_Amount']
     gross_win_series = df['gross_win']
@@ -211,10 +214,8 @@ def calculate_trends(df, mode='cumulative', window=50):
     loss_count_series = df['is_loss']
     
     if mode == 'rolling':
-        # [關鍵參數修正] min_periods=1
-        # 這會產生「擴展(Expanding) -> 滾動(Rolling)」的自然過渡效果
-        # 前 window-1 筆：計算目前的累計值
-        # 第 window 筆後：開始移除舊資料，計算真正的滾動視窗
+        # min_periods=1: 不足 50 筆時，有幾筆算幾筆 (累積概念)
+        # 滿 50 筆後，自動推移 (滾動概念)
         s_pnl = pnl_series.rolling(window=window, min_periods=1).sum()
         s_risk = risk_series.rolling(window=window, min_periods=1).sum()
         s_g_win = gross_win_series.rolling(window=window, min_periods=1).sum()
@@ -240,9 +241,9 @@ def calculate_trends(df, mode='cumulative', window=50):
     df['Payoff Ratio'] = avg_win / avg_loss.replace(0, np.nan)
     
     # --- R Squared ---
-    # R2 的計算比較特殊，我們設定 min_periods=3 避免前兩筆資料畫不出線報錯
     equity_curve = df['PnL'].cumsum()
-    x_axis = pd.Series(np.arange(len(df)), index=df.index)
+    # 強制使用單純的數列 (0, 1, 2...) 作為 X 軸來算斜率，不使用日期
+    x_axis = pd.Series(df.index, index=df.index)
     
     if mode == 'rolling':
         r = equity_curve.rolling(window=window, min_periods=3).corr(x_axis)
@@ -253,7 +254,6 @@ def calculate_trends(df, mode='cumulative', window=50):
 
     df = df.fillna(0)
     
-    # 回傳完整資料，不進行任何裁切，保留第一筆到最後一筆
     return df[['Date', 'Trade_Num', 'PnL', 'Risk_Amount', 'Expectancy', 'Profit Factor', 'Payoff Ratio', 'R Squared']]
 
 # ==========================================
@@ -340,9 +340,7 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
             with cc1:
                 calc_mode = st.radio("計算模式", ["Cumulative (累計)", "Rolling (滾動)"], index=1, horizontal=True)
             
-            # 設定最大視窗不可超過總筆數，避免 Slider 卡住
             max_window = max(10, total_rows)
-            
             window_size = 50
             if "Rolling" in calc_mode:
                 with cc2:
@@ -354,13 +352,19 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
                         step=10
                     )
                 mode_key = 'rolling'
+                
+                # --- [新增] 計算範圍驗證資訊 (Debug Info) ---
+                # 用於回答用戶：到底有沒有正確抓到範圍？
+                # 計算：最新一筆 (total_rows) 的計算範圍
+                start_idx = max(1, total_rows - window_size + 1)
+                end_idx = total_rows
+                st.info(f"💡 驗證：目前最新的一筆資料 (第 {total_rows} 筆)，其數值是由 **第 {start_idx} 筆 到 第 {end_idx} 筆** 的交易計算平均而得。")
+                
             else:
                 mode_key = 'cumulative'
 
-            # 計算趨勢 (回傳完整資料)
             df_trends = calculate_trends(df_kpi, mode=mode_key, window=window_size)
             
-            # 繪圖
             if not df_trends.empty:
                 fig = make_subplots(
                     rows=2, cols=2,
@@ -374,9 +378,6 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
                 )
 
                 hover_template = "日期: %{x}<br>數值: %{y:.2f}<br>交易序號: %{customdata[0]}<extra></extra>"
-
-                # 為了避免圖表重整時的緩存問題，加入 key 參數強制重繪
-                chart_key = f"trend_chart_{mode_key}_{window_size}"
 
                 fig.add_trace(go.Scatter(
                     x=df_trends['Date'], y=df_trends['Expectancy'], 
@@ -406,7 +407,7 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
                 fig.update_xaxes(showgrid=False)
                 fig.update_yaxes(showgrid=True, gridcolor='#eee')
                 
-                st.plotly_chart(fig, use_container_width=True, key=chart_key)
+                st.plotly_chart(fig, use_container_width=True)
                 
             else:
                 st.info("無數據可繪製。")
