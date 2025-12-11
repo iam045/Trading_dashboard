@@ -399,19 +399,25 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
                 day_max_win = wins.max() if not wins.empty else 0
                 day_max_loss = losses.min() if not losses.empty else 0
 
-                # 顯示上方數據列 (置中)
-                st.markdown("---")
-                stat_c1, stat_c2, stat_c3 = st.columns(3)
+                c_cal, c_stat = st.columns([3, 1])
                 
-                # 使用 delta_color="off" 保持極簡風格，或者自定義顏色
-                stat_c1.metric("本月淨損益", f"${m_total_pnl:,.0f}", delta=None)
-                stat_c2.metric("日最大獲利", f"+${day_max_win:,.0f}", delta="Best Day", delta_color="normal")
-                stat_c3.metric("日最大虧損", f"-${abs(day_max_loss):,.0f}", delta="Worst Day", delta_color="inverse")
-                st.markdown("---")
+                with c_cal:
+                    # 顯示日曆
+                    st.markdown(f"<h3 style='margin-bottom: 20px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+                    st.markdown(generate_calendar_html(y, m, daily_pnl), unsafe_allow_html=True)
 
-                # 顯示日曆
-                st.markdown(f"<h3 style='margin-bottom: 20px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
-                st.markdown(generate_calendar_html(y, m, daily_pnl), unsafe_allow_html=True)
+                with c_stat:
+                    # 右側統計數據
+                    st.markdown("#### 月度摘要")
+                    st.metric("本月淨損益", f"${m_total_pnl:,.0f}")
+                    st.metric("日最大獲利", f"+${day_max_win:,.0f}") # 新增
+                    st.metric("日最大虧損", f"-${abs(day_max_loss):,.0f}") # 新增
+                    
+                    # 簡易計數
+                    m_win_count = len(wins)
+                    m_loss_count = len(losses)
+                    st.write(f"📈 獲利天數: **{m_win_count}**")
+                    st.write(f"📉 虧損天數: **{m_loss_count}**")
             else:
                 st.info("無有效月份")
         else:
