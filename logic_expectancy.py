@@ -1,122 +1,3 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import numpy as np
-
-def clean_numeric(series):
-    """清洗數字格式 (移除逗號、轉型)"""
-    return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
-
-def get_expectancy_data(xls):
-    target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
-    if not target_sheet:
-        return None, "找不到含有 '期望值' 的分頁"
-
-    try:
-        # 讀取資料 (標題在第15列 -> header=14)
-        df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
-        
-        if df.shape[1] < 14:
-            return None, "表格欄位不足 14 欄，請檢查格式。"
-
-        # 欄位選取：日期(0), 策略(1), 最後總風險(10), 損益(11), R(13)
-        df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
-        df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
-
-        df_clean = df_clean.dropna(subset=['Date']) 
-        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
-        
-        for col in ['Risk_Amount', 'PnL', 'R']:
-            df_clean[col] = clean_numeric(df_clean[col])
-        
-        df_clean = df_clean.dropna(subset=['PnL', 'Risk_Amount'])
-        df_clean['Risk_Amount'] = df_clean['Risk_Amount'].abs()
-        df_clean = df_clean[df_clean['Risk_Amount'] > 0]
-
-        return df_clean.sort_values('Date'), None
-
-    except Exception as e:
-        return None, f"讀取失敗: {e}"
-
-def calculate_streaks(df):
-    """計算最大連勝與連敗"""
-    pnl = df['PnL'].values
-    max_win_streak = 0
-    max_loss_streak = 0
-    curr_win = 0
-    curr_loss = 0
-    
-    for val in pnl:
-        if val > 0:
-            curr_win += 1
-            curr_loss = 0
-            if curr_win > max_win_streak: max_win_streak = curr_win
-        elif val <= 0:
-            curr_loss += 1
-            curr_win = 0
-            if curr_loss > max_loss_streak: max_loss_streak = curr_loss
-            
-    return max_win_streak, max_loss_streak
-
-def calculate_r_squared(df):
-    """計算權益曲線的平滑度 (R-Squared)"""
-    y = df['R'].cumsum().values
-    x = np.arange(len(y))
-    if len(y) < 2: return 0
-    correlation_matrix = np.corrcoef(x, y)
-    correlation_xy = correlation_matrix[0, 1]
-    r_squared = correlation_xy ** 2
-    return r_squared
-
-def calculate_kpis(df):
-    total_trades = len(df)
-    if total_trades == 0: return None
-    
-    wins = df[df['PnL'] > 0]
-    losses = df[df['PnL'] <= 0]
-    
-    gross_profit = wins['PnL'].sum()
-    gross_loss = abs(losses['PnL'].sum())
-    total_pnl = df['PnL'].sum()
-    total_risk = df['Risk_Amount'].sum()
-    
-    win_rate = len(wins) / total_trades
-    avg_win = wins['PnL'].mean() if len(wins) > 0 else 0
-    avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
-    payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
-    
-    expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-    
-    # 凱利公式基礎值 (Full Kelly %)
-    if payoff_ratio > 0:
-        full_kelly = win_rate - (1 - win_rate) / payoff_ratio
-    else:
-        full_kelly = 0
-        
-    # 進階數據
-    max_win, max_loss = calculate_streaks(df)
-    r_sq = calculate_r_squared(df)
-    
-    # SQN
-    r_std = df['R'].std()
-    sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
-    
-    return {
-        "Total Trades": total_trades,
-        "Total PnL": total_pnl,
-        "Win Rate": win_rate,
-        "Payoff Ratio": payoff_ratio,
-        "Expectancy Custom": expectancy_custom,
-        "Profit Factor": profit_factor,
-        "Max Win Streak": max_win,
-        "Max Loss Streak": max_loss,
-        "R Squared": r_sq,
-        "Full Kelly": full_kelly,
-        "SQN": sqn
-    }
-
 def display_expectancy_lab(xls):
     df, err = get_expectancy_data(xls)
     
@@ -129,31 +10,45 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df)
     
-    # --- 1. 系統體檢報告 (依照要求排序) ---
+    # --- 1. 系統體檢報告 (3x4 嚴格對齊) ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     
-    # 第一排：戰績與連續紀錄
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    # ===================================================================
+    # R1: 交易次數 (只用第一欄，保持靠左，確保與下方對齊)
+    # ===================================================================
+    # Streamlit 必須宣告 4 個欄位，只使用第一個欄位
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4) 
     r1c1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
-    r1c2.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
-    r1c3.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="🔥 High", delta_color="normal")
-    r1c4.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="❄️ Risk", delta_color="inverse")
     
-    # 第二排：損益與期望值核心
-    r2c1, r2c2, r2c3, r2c4, r2c5 = st.columns(5)
+    # ===================================================================
+    # R2: 損益, 勝率, 連勝, 連敗
+    # ===================================================================
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     r2c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
-    r2c2.metric("期望值 (Exp R)", f"{kpi['Expectancy Custom']:.2f} R", help="總損益 / 含成本總風險")
-    r2c3.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
+    r2c2.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    r2c3.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="🔥 High", delta_color="normal")
+    r2c4.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="❄️ Risk", delta_color="inverse")
     
-    # 獲利因子
+    # ===================================================================
+    # R3: 期望值, 盈虧比, 獲利因子, 曲線穩定度 (R²)
+    # ===================================================================
+    r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+    
+    # 期望值
+    r3c1.metric("期望值 (Exp R)", f"{kpi['Expectancy Custom']:.2f} R", help="總損益 / 含成本總風險")
+    
+    # 盈虧比 (Payoff Ratio)
+    r3c2.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
+    
+    # 獲利因子 (PF)
     pf = kpi['Profit Factor']
     pf_col = "normal" if pf >= 1 else "inverse"
-    r2c4.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 佳", delta_color="off")
+    r3c3.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 佳", delta_color="off")
     
-    # 曲線穩定度 (R^2)
+    # 曲線穩定度 (R^2) - 替換原本的「與其他」
     r2 = kpi['R Squared']
     r2_color = "normal" if r2 > 0.8 else "off"
-    r2c5.metric("曲線穩定度 (R²)", f"{r2:.2f}", delta="越近 1 越穩", delta_color="off")
+    r3c4.metric("曲線穩定度 (R²)", f"{r2:.2f}", delta="越近 1 越穩", delta_color="off")
 
     st.markdown("---")
     
@@ -170,9 +65,9 @@ def display_expectancy_lab(xls):
         
         with c_input2:
             kelly_frac_input = st.selectbox("凱利倍數", 
-                                  options=[1/1, 1/2, 1/4, 1/7, 1/10], 
-                                  format_func=lambda x: "全凱利 (Full)" if x==1 else f"1/{int(1/x)} 凱利",
-                                  index=3) # 預設 1/7
+                                            options=[1/1, 1/2, 1/4, 1/7, 1/10], 
+                                            format_func=lambda x: "全凱利 (Full)" if x==1 else f"1/{int(1/x)} 凱利",
+                                            index=3) # 預設 1/7
 
         # 中間放個箭頭或分隔，視覺上引導
         with c_arrow:
