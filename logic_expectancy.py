@@ -27,20 +27,29 @@ def inject_custom_css():
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
             text-align: center;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 140px; /* 固定高度讓排版整齊 */
         }
         div[data-testid="stMetric"]:hover { border-color: #81C7D4; }
         div[data-testid="stMetricLabel"] { font-size: 13px; color: #888; justify-content: center; width: 100%; }
         div[data-testid="stMetricValue"] { font-size: 24px; font-weight: 600; color: #333; }
 
-        /* Popover 按鈕優化 */
+        /* Popover 按鈕極簡化 (隱藏邊框與背景，只留 Icon) */
         button[kind="secondary"] {
             border: none;
             background: transparent;
             color: #81C7D4;
-            font-size: 0.8rem;
-            padding: 0px;
+            font-size: 1.2rem; /* 圖示大一點 */
+            padding: 0px 10px;
+            margin-top: -5px;
+            transition: transform 0.2s;
         }
         button[kind="secondary"]:hover {
+            color: #5bb0c0;
+            background: transparent;
+            border: none;
+            transform: scale(1.2); /* 滑鼠移過去稍微放大 */
+        }
+        button[kind="secondary"]:active {
             color: #5bb0c0;
             background: transparent;
             border: none;
@@ -59,6 +68,11 @@ def inject_custom_css():
         .day-pnl { font-size: 13px; font-weight: 600; }
         
         .modebar { display: none !important; }
+        
+        /* 修正 Selectbox 置中問題，讓它在日曆區靠左 */
+        .cal-selector div[data-baseweb="select"] {
+            text-align: left;
+        }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -147,16 +161,12 @@ def calculate_kpis(df):
     }
 
 def calculate_trends(df):
-    # 這裡進行的是「全局計算」 (Cumulative)
-    # 所有的指標都是從第一筆交易開始累計的
     df = df.sort_values('Date').reset_index(drop=True).copy()
     
-    # R 趨勢計算 (累計)
     df['win_r_val'] = df['R'].apply(lambda x: x if x > 0 else 0)
     df['loss_r_val'] = df['R'].apply(lambda x: abs(x) if x <= 0 else 0)
     df['is_win'] = (df['PnL'] > 0).astype(int)
     
-    # Cumulative sums
     s_pnl = df['PnL'].cumsum()
     s_risk = df['Risk_Amount'].cumsum()
     s_win_r = df['win_r_val'].cumsum()
@@ -167,7 +177,6 @@ def calculate_trends(df):
     s_g_win = df['PnL'].apply(lambda x: x if x > 0 else 0).cumsum()
     s_g_loss = df['PnL'].apply(lambda x: abs(x) if x <= 0 else 0).cumsum()
 
-    # Metrics Trends
     df['Total PnL'] = s_pnl
     df['Expectancy'] = s_pnl / s_risk.replace(0, np.nan)
     df['Profit Factor'] = (s_g_win / s_g_loss.replace(0, np.nan)).fillna(10).clip(upper=10)
@@ -181,7 +190,6 @@ def calculate_trends(df):
 # ==========================================
 
 def hex_to_rgba(hex_color, opacity=0.1):
-    """將 #RRGGBB 轉換為 rgba(r, g, b, opacity)"""
     hex_color = hex_color.lstrip('#')
     if len(hex_color) == 6:
         r = int(hex_color[0:2], 16)
@@ -191,10 +199,7 @@ def hex_to_rgba(hex_color, opacity=0.1):
     return hex_color 
 
 def get_mini_chart(df_t, col_name, color, title, height=400):
-    """
-    生成趨勢圖 (支援局部顯示與圖表高度設定)
-    height 預設調大至 400
-    """
+    """生成趨勢圖"""
     fill_color = hex_to_rgba(color, 0.15)
     
     fig = go.Figure()
@@ -207,9 +212,9 @@ def get_mini_chart(df_t, col_name, color, title, height=400):
     ))
     fig.update_layout(
         title=dict(text=title, font=dict(size=14), x=0.5, xanchor='center'),
-        height=height, # 使用傳入的高度
+        height=height, 
         margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=True), # 顯示日期
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=True),
         yaxis=dict(showgrid=True, gridcolor='#eee'),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         showlegend=False
@@ -218,7 +223,6 @@ def get_mini_chart(df_t, col_name, color, title, height=400):
 
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
-    # Tooltips
     tips = {
         "Exp": "定義: 每單位風險的平均獲利。\n公式: 總損益 ÷ 總初始風險",
         "PF": "定義: 總獲利金額與總虧損金額的比率。\n公式: 總獲利金額 ÷ 總虧損金額",
@@ -227,18 +231,17 @@ def draw_kpi_cards_with_charts(kpi, df_t):
         "RSQ": "定義: 權益曲線的回歸判定係數，越接近 1 代表獲利越穩定。"
     }
 
-    # 第一排 KPI
     c1, c2, c3, c4, c5 = st.columns(5)
     
-    # 1. 總損益 (需求: 不需要彈窗走勢)
+    # 1. 總損益 (純數據)
     with c1:
         st.metric("總損益", f"${kpi['Total PnL']:,.0f}")
 
-    # 2. 期望值
+    # 2. 期望值 (圖示按鈕)
     with c2:
         st.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=tips['Exp'])
-        with st.popover("📈 趨勢圖", use_container_width=True):
-            # 局部顯示控制
+        # 使用 📊 Icon 取代文字，並透過 CSS 讓它看起來像卡片的一部分
+        with st.popover("📊", use_container_width=True):
             range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_exp")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Expectancy', '#FF8A65', '期望值走勢'), use_container_width=True)
@@ -246,34 +249,33 @@ def draw_kpi_cards_with_charts(kpi, df_t):
     # 3. 獲利因子
     with c3:
         st.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=tips['PF'])
-        with st.popover("📈 趨勢圖", use_container_width=True):
+        with st.popover("📊", use_container_width=True):
             range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_pf")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Profit Factor', '#BA68C8', '獲利因子走勢'), use_container_width=True)
 
-    # 4. 盈虧比 (R)
+    # 4. 盈虧比
     with c4:
         st.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=tips['Payoff'])
-        with st.popover("📈 趨勢圖", use_container_width=True):
+        with st.popover("📊", use_container_width=True):
             range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_payoff")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Payoff Ratio', '#4DB6AC', '盈虧比走勢'), use_container_width=True)
 
-    # 5. 勝率
+    # 5. 勝率 (純數據)
     with c5:
         st.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=tips['Win'])
-        st.write("") 
 
-    st.write("") # 間距
+    st.write("") 
 
-    # 第二排 KPI
+    # 第二排
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次")
     d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次")
     with d4:
         st.metric("穩定度 R²", f"{kpi['R Squared']:.2f}", help=tips['RSQ'])
-        with st.popover("📈 趨勢圖", use_container_width=True):
+        with st.popover("📊", use_container_width=True):
              range_mode = st.radio("顯示範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_rsq")
              df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
              st.plotly_chart(get_mini_chart(df_show, 'R Squared', '#9575CD', '穩定度走勢'), use_container_width=True)
@@ -316,8 +318,14 @@ def draw_calendar_fragment(df_cal, theme_mode):
     
     if len(unique_months) == 0: st.info("無有效月份"); return
 
-    c_a, c_b, c_c = st.columns([2, 1, 2])
-    with c_b: sel_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector', label_visibility="collapsed")
+    st.markdown("---")
+    
+    # [修正] 將選單移至左上方 (Column 1)
+    c_header_left, c_header_space = st.columns([1, 4])
+    with c_header_left:
+        st.markdown('<div class="cal-selector">', unsafe_allow_html=True)
+        sel_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector', label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     y, m = sel_period.year, sel_period.month
     month_data = df_cal[df_cal['Date'].dt.to_period('M') == sel_period]
@@ -328,11 +336,9 @@ def draw_calendar_fragment(df_cal, theme_mode):
     day_max_win = wins.max() if not wins.empty else 0
     day_max_loss = losses.min() if not losses.empty else 0
     
-    st.markdown("---")
     c_cal, c_stat = st.columns([3, 1])
     with c_cal:
-        st.markdown(f"<h3 style='margin-bottom: 20px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
-        # 生成日曆 HTML
+        st.markdown(f"<h3 style='margin-bottom: 20px; text-align: left !important; padding-left: 10px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
         cal_obj = calendar.Calendar(firstweekday=6)
         month_days = cal_obj.monthdayscalendar(y, m)
         win_bg, win_txt = "#e0f7fa", "#006064"; loss_bg, loss_txt = "#ffebee", "#c62828"
@@ -379,7 +385,7 @@ def display_expectancy_lab(xls):
     kpi = calculate_kpis(df_kpi)
     df_trends = calculate_trends(df_kpi) # 預先計算全局趨勢
 
-    # 1. KPI 區塊 (包含圖表 Popover, 支援局部切換)
+    # 1. KPI 區塊
     draw_kpi_cards_with_charts(kpi, df_trends)
     
     st.markdown("---")
