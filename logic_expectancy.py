@@ -257,7 +257,7 @@ def get_mini_chart(df_t, col_name, color, title, height=400):
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
     tips = {
-        "Exp": "定義: 每單位風險的平均獲利。\n公式: 總損益 ÷ 總初始風險",
+        "Exp": "定義: 因為這裡是用總風險(含成本)去算，所以是R。\n公式: 總損益 ÷ 總停損最大風險",
         "PF": "定義: 總獲利金額與總虧損金額的比率。\n公式: 總獲利金額 ÷ 總虧損金額",
         "Payoff": "定義: 平均每筆獲利 R 與平均每筆虧損 R 的比例。\n公式: Avg Win R ÷ Avg Loss R",
         "Win": "定義: 獲利交易次數佔總交易次數的比例。\n公式: 獲利筆數 ÷ 總交易筆數",
