@@ -3,18 +3,136 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-import calendar  # 新增：用於生成日曆
+import calendar
 
-# ... (保留原本的 helper functions: clean_numeric, get_expectancy_data, calculate_streaks, calculate_r_squared, calculate_kpis) ...
-# 請確保上方那些基礎運算函式都在，這裡只提供 display_expectancy_lab 與新的日曆 helper
+# ==========================================
+# 1. 基礎運算與資料讀取 (Helper Functions)
+# ==========================================
+
+def clean_numeric(series):
+    """清洗數字格式 (移除逗號、轉型)"""
+    return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
+
+def get_expectancy_data(xls):
+    """讀取 Excel 中的期望值分頁"""
+    # 尋找含有 "期望值" 字眼的分頁
+    target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
+    if not target_sheet:
+        return None, "找不到含有 '期望值' 的分頁"
+
+    try:
+        # 讀取資料 (假設標題在第15列 -> header=14)
+        df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
+        
+        if df.shape[1] < 14:
+            return None, "表格欄位不足 14 欄，請檢查格式。"
+
+        # 欄位選取：日期(0), 策略(1), 最後總風險(10), 損益(11), R(13)
+        df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
+        df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
+
+        df_clean = df_clean.dropna(subset=['Date']) 
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
+        
+        for col in ['Risk_Amount', 'PnL', 'R']:
+            df_clean[col] = clean_numeric(df_clean[col])
+        
+        df_clean = df_clean.dropna(subset=['PnL', 'Risk_Amount'])
+        df_clean['Risk_Amount'] = df_clean['Risk_Amount'].abs()
+        df_clean = df_clean[df_clean['Risk_Amount'] > 0]
+
+        return df_clean.sort_values('Date'), None
+
+    except Exception as e:
+        return None, f"讀取失敗: {e}"
+
+def calculate_streaks(df):
+    """計算最大連勝與連敗"""
+    pnl = df['PnL'].values
+    max_win_streak = 0
+    max_loss_streak = 0
+    curr_win = 0
+    curr_loss = 0
+    
+    for val in pnl:
+        if val > 0:
+            curr_win += 1
+            curr_loss = 0
+            if curr_win > max_win_streak: max_win_streak = curr_win
+        elif val <= 0:
+            curr_loss += 1
+            curr_win = 0
+            if curr_loss > max_loss_streak: max_loss_streak = curr_loss
+            
+    return max_win_streak, max_loss_streak
+
+def calculate_r_squared(df):
+    """計算權益曲線的平滑度 (R-Squared)"""
+    if len(df) < 2: return 0
+    y = df['R'].cumsum().values
+    x = np.arange(len(y))
+    
+    # 計算相關係數矩陣
+    correlation_matrix = np.corrcoef(x, y)
+    correlation_xy = correlation_matrix[0, 1]
+    r_squared = correlation_xy ** 2
+    return r_squared
+
+def calculate_kpis(df):
+    """計算所有關鍵指標"""
+    total_trades = len(df)
+    if total_trades == 0: return None
+    
+    wins = df[df['PnL'] > 0]
+    losses = df[df['PnL'] <= 0]
+    
+    gross_profit = wins['PnL'].sum()
+    gross_loss = abs(losses['PnL'].sum())
+    total_pnl = df['PnL'].sum()
+    total_risk = df['Risk_Amount'].sum()
+    
+    win_rate = len(wins) / total_trades
+    avg_win = wins['PnL'].mean() if len(wins) > 0 else 0
+    avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
+    payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+    
+    expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    
+    # 凱利公式基礎值 (Full Kelly %)
+    if payoff_ratio > 0:
+        full_kelly = win_rate - (1 - win_rate) / payoff_ratio
+    else:
+        full_kelly = 0
+        
+    # 進階數據
+    max_win, max_loss = calculate_streaks(df)
+    r_sq = calculate_r_squared(df)
+    
+    # SQN
+    r_std = df['R'].std()
+    sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
+    
+    return {
+        "Total Trades": total_trades,
+        "Total PnL": total_pnl,
+        "Win Rate": win_rate,
+        "Payoff Ratio": payoff_ratio,
+        "Expectancy Custom": expectancy_custom,
+        "Profit Factor": profit_factor,
+        "Max Win Streak": max_win,
+        "Max Loss Streak": max_loss,
+        "R Squared": r_sq,
+        "Full Kelly": full_kelly,
+        "SQN": sqn
+    }
 
 def generate_calendar_html(year, month, df_daily):
     """
-    生成類似 GitHub Contribution 或 Trading Journal 的月曆 HTML
+    生成 HTML 格式的月曆 (CSS Grid/Table)
     """
     cal = calendar.Calendar(firstweekday=6) # 星期日開始
     month_days = cal.monthdayscalendar(year, month)
-    month_name = calendar.month_name[month]
     
     # CSS 樣式
     html = f"""
@@ -88,6 +206,10 @@ def generate_calendar_html(year, month, df_daily):
     
     html += "</tbody></table></div>"
     return html
+
+# ==========================================
+# 2. 主顯示邏輯 (Dashboard UI)
+# ==========================================
 
 def display_expectancy_lab(xls):
     df, err = get_expectancy_data(xls)
