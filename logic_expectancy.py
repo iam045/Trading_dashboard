@@ -20,20 +20,30 @@ def get_expectancy_data(xls):
         return None, "找不到含有 '期望值' 的分頁"
 
     try:
+        # 讀取資料 (標題在第15列 -> header=14)
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
         if df.shape[1] < 14:
             return None, "表格欄位不足 14 欄，請檢查格式。"
 
+        # 欄位選取：日期(0), 策略(1), 最後總風險(10), 損益(11), R(13)
         df_clean = df.iloc[:, [0, 1, 10, 11, 13]].copy()
         df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
 
+        # [修正重點 1] 向下填滿日期：解決同一天多筆交易只有第一筆有寫日期的問題
+        df_clean['Date'] = df_clean['Date'].ffill()
+
+        # 移除完全沒有日期的行 (例如最下面的空白行)
         df_clean = df_clean.dropna(subset=['Date']) 
-        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         
+        # [修正重點 2] 標準化日期：轉為 datetime 並移除時分秒 (Normalize)
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').dt.normalize()
+        
+        # 轉型數值
         for col in ['Risk_Amount', 'PnL', 'R']:
             df_clean[col] = clean_numeric(df_clean[col])
         
+        # 過濾有效交易 (有損益且有風險金額)
         df_clean = df_clean.dropna(subset=['PnL', 'Risk_Amount'])
         df_clean['Risk_Amount'] = df_clean['Risk_Amount'].abs()
         df_clean = df_clean[df_clean['Risk_Amount'] > 0]
@@ -122,10 +132,12 @@ def calculate_kpis(df):
 def generate_calendar_html(year, month, pnl_dict):
     """
     生成 HTML 格式的月曆
+    修正：移除縮排避免 Markdown 解析錯誤
     """
     cal = calendar.Calendar(firstweekday=6) # 星期日開始
     month_days = cal.monthdayscalendar(year, month)
     
+    # CSS
     html = f"""
 <style>
     .cal-container {{ font-family: "Source Sans Pro", sans-serif; width: 100%; }}
@@ -157,6 +169,7 @@ def generate_calendar_html(year, month, pnl_dict):
                 html += "<td class='cal-td' style='background-color: #fafafa;'></td>"
                 continue
             
+            # 使用標準 YYYY-MM-DD 字串當作 Key
             date_key = f"{year}-{month:02d}-{day:02d}"
             day_pnl = pnl_dict.get(date_key, 0)
             has_trade = date_key in pnl_dict
@@ -237,25 +250,24 @@ def display_expectancy_lab(xls):
     # --- 月曆儀表板 ---
     st.markdown("#### 📅 交易月曆 (Monthly Performance)")
     
-    # 建立字串 Key 的字典
+    # [修正重點 3] 確保日期字串化邏輯與日曆生成器完全一致
+    # 使用 .dt.strftime('%Y-%m-%d') 強制轉換
     df['DateStr'] = df['Date'].dt.strftime('%Y-%m-%d')
     daily_pnl_series = df.groupby('DateStr')['PnL'].sum()
     pnl_dict = daily_pnl_series.to_dict()
     
-    # [修正] 產生不重複月份並排序
-    # 原本使用 unique() 會回傳 numpy array 導致沒有 sort_values
-    # 改用 drop_duplicates() 保持 Series 格式
+    # 產生月份選單 (使用 drop_duplicates 確保 Series 格式)
     unique_months = df['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
     
     if len(unique_months) > 0:
         sel_col, _ = st.columns([1, 4]) 
         with sel_col:
+            # 加入 Key 防止狀態重置
             selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
         
         y, m = selected_period.year, selected_period.month
         
-        # 篩選當月數據
-        # 確保比較對象都是 Period 或 Timestamp，這裡用字串比較最穩
+        # 篩選當月資料 (使用字串前綴匹配，最穩定)
         month_prefix = f"{y}-{m:02d}"
         month_data = daily_pnl_series[daily_pnl_series.index.str.startswith(month_prefix)]
         
