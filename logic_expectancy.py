@@ -3,10 +3,9 @@ import pandas as pd
 import numpy as np
 import calendar
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # ==========================================
-# 0. UI 風格與 CSS 注入器 (Modern Only)
+# 0. UI 風格與 CSS 注入器 (懸浮覆蓋版)
 # ==========================================
 
 def inject_custom_css():
@@ -18,76 +17,75 @@ def inject_custom_css():
         .block-container { text-align: center; }
         h1, h2, h3, p { text-align: center !important; }
 
-        /* --- 1. 卡片容器樣式 --- */
-        /* 針對包含 Metric 的 Column 進行卡片化 */
-        div[data-testid="column"]:has(div[data-testid="stMetric"]) {
+        /* --- 1. 定義 Metric 卡片樣式 (恢復您喜歡的白色卡片) --- */
+        div[data-testid="stMetric"] {
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
+            padding: 20px 10px; /* 內距 */
             border-radius: 12px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
-            padding: 15px 5px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
             text-align: center;
-            position: relative; /* 關鍵：讓內部的絕對定位以這個卡片為基準 */
             transition: transform 0.2s;
-            min-height: 140px;
+            position: relative; /* 讓它維持層級 */
+            z-index: 1;
+            min-height: 140px; /* 統一高度 */
+            display: flex; flex-direction: column; justify-content: center;
         }
-        div[data-testid="column"]:has(div[data-testid="stMetric"]):hover {
+        
+        div[data-testid="stMetric"]:hover {
             border-color: #81C7D4;
             transform: translateY(-2px);
         }
 
-        /* --- 2. 修正 Popover 按鈕 (懸浮定位) --- */
-        /* 這段 CSS 會把 Popover 按鈕 "抽離" 排版流，釘在卡片右上角 */
-        div[data-testid="column"] div[data-testid="stPopover"] {
+        div[data-testid="stMetricLabel"] {
+            font-size: 13px; color: #888; justify-content: center; width: 100%;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 24px; font-weight: 600; color: #333;
+        }
+
+        /* --- 2. 處理 Column 設定，讓絕對定位生效 --- */
+        /* 讓 Column 變成定位基準點 */
+        div[data-testid="column"] {
+            position: relative !important;
+        }
+
+        /* --- 3. 懸浮 Popover 按鈕 (關鍵修改) --- */
+        /* 這會把按鈕從排版流中拿出來，釘在 Column 的右上角 */
+        div[data-testid="stPopover"] {
             position: absolute !important;
-            top: 10px !important;
-            right: 35px !important; /* 35px 是為了閃避 st.metric 自帶的小問號 */
-            z-index: 999 !important;
+            top: 15px !important;
+            right: 15px !important; /* 調整這個數值可以改變左右位置 */
+            z-index: 999 !important; /* 確保浮在卡片最上面 */
             width: auto !important;
             height: auto !important;
         }
 
-        /* 按鈕本體樣式 - 變成透明圖示 */
-        div[data-testid="column"] div[data-testid="stPopover"] button {
+        /* 按鈕外觀極簡化 */
+        div[data-testid="stPopover"] > button {
             border: none !important;
             background: transparent !important;
-            color: #ccc !important; /* 預設淡灰色，像問號一樣低調 */
-            font-size: 1rem !important; 
-            padding: 0px !important;
-            margin: 0px !important;
+            color: #ccc !important; /* 預設淺灰色，低調 */
+            padding: 0 !important;
+            margin: 0 !important;
+            font-size: 1rem !important;
             line-height: 1 !important;
-            box-shadow: none !important;
-            min-height: 0px !important;
-        }
-        
-        /* 滑鼠移過去變色 */
-        div[data-testid="column"] div[data-testid="stPopover"] button:hover {
-            color: #81C7D4 !important; /* 懸停時變亮 */
-            transform: scale(1.2);
-        }
-        
-        /* 點擊時狀態 */
-        div[data-testid="column"] div[data-testid="stPopover"] button:focus,
-        div[data-testid="column"] div[data-testid="stPopover"] button:active {
-            color: #81C7D4 !important;
-            outline: none !important;
-            border: none !important;
             box-shadow: none !important;
         }
 
-        /* --- 3. Metric 樣式調整 --- */
-        div[data-testid="stMetric"] {
-            background-color: transparent !important;
+        /* 滑鼠移過去變色 */
+        div[data-testid="stPopover"] > button:hover {
+            color: #81C7D4 !important; /* 懸停變色 */
+            transform: scale(1.2);
+            background: transparent !important;
+        }
+        
+        div[data-testid="stPopover"] > button:active,
+        div[data-testid="stPopover"] > button:focus {
+            outline: none !important;
             border: none !important;
             box-shadow: none !important;
-            padding: 0 !important;
-            z-index: 1; 
-        }
-        div[data-testid="stMetricLabel"] { 
-            font-size: 13px; color: #888; justify-content: center; width: 100%; 
-        }
-        div[data-testid="stMetricValue"] { 
-            font-size: 24px; font-weight: 600; color: #333; 
+            color: #81C7D4 !important;
         }
 
         /* --- 其他樣式 --- */
@@ -175,12 +173,9 @@ def calculate_kpis(df):
     avg_loss_r = abs(df[df['R'] <= 0]['R'].mean()) if len(losses) > 0 else 0
     payoff_r = avg_win_r / avg_loss_r if avg_loss_r > 0 else 0
     
-    # Money PF
     pf = wins['PnL'].sum() / abs(losses['PnL'].sum()) if losses['PnL'].sum() != 0 else float('inf')
-    # Expectancy
     total_risk = df['Risk_Amount'].sum()
     exp_custom = total_pnl / total_risk if total_risk > 0 else 0
-    # Kelly
     full_kelly = (win_rate - (1 - win_rate) / payoff_r) if payoff_r > 0 else 0
     
     max_win, max_loss = calculate_streaks(df); r_sq = calculate_r_squared(df)
@@ -193,7 +188,6 @@ def calculate_kpis(df):
 def calculate_trends(df):
     df = df.sort_values('Date').reset_index(drop=True).copy()
     
-    # R 趨勢計算 (累計)
     df['win_r_val'] = df['R'].apply(lambda x: x if x > 0 else 0)
     df['loss_r_val'] = df['R'].apply(lambda x: abs(x) if x <= 0 else 0)
     df['is_win'] = (df['PnL'] > 0).astype(int)
@@ -260,7 +254,6 @@ def draw_kpi_cards_with_charts(kpi, df_t):
         "RSQ": "定義: 權益曲線的回歸判定係數，越接近 1 代表獲利越穩定。"
     }
 
-    # 第一排
     c1, c2, c3, c4, c5 = st.columns(5)
     
     # 1. 總損益 (純數據)
@@ -269,11 +262,12 @@ def draw_kpi_cards_with_charts(kpi, df_t):
 
     # 2. 期望值
     with c2:
-        # 使用 📊 Icon，CSS 會把它定位到右上角 (right: 35px)
+        # 注意: 這裡的 Popover 會被 CSS 抓到右上角懸浮，不會佔據空間
         with st.popover("📊", use_container_width=False):
             range_mode = st.radio("範圍", ["全歷史", "近 50 筆", "近 100 筆"], horizontal=True, key="range_exp")
             df_show = df_t if range_mode == "全歷史" else (df_t.tail(50) if range_mode == "近 50 筆" else df_t.tail(100))
             st.plotly_chart(get_mini_chart(df_show, 'Expectancy', '#FF8A65', '期望值走勢'), use_container_width=True)
+        # Metric 正常顯示，會呈現卡片樣式
         st.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=tips['Exp'])
 
     # 3. 獲利因子
