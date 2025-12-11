@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import calendar
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -185,28 +184,25 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. 進階計算：趨勢分析 (修正版：全局計算 + 尾端切片)
+# 2. 進階計算：趨勢分析 (全局計算 + 局部切片)
 # ==========================================
 
 def calculate_trends(df, mode='cumulative', window=50):
     """
     計算 KPI 變化
-    模式說明：
-    - cumulative (全歷史): 顯示從第1筆到最後1筆的完整走勢。
-    - recent (最近 N 筆): 依然計算歷史累計值 (保留數值)，但只截取最後 N 筆來畫圖 (放大檢視)。
+    - 先對全體資料進行累計計算 (保留歷史底蘊)。
+    - 若為 'recent' 模式，則在最後進行切片，只顯示最近 N 筆的走勢。
     """
-    # 1. 基礎整理與排序
     df = df.sort_values('Date').reset_index(drop=True).copy()
     df['Original_Trade_Num'] = df.index + 1
     
-    # 2. 預計算輔助欄位
+    # 預計算輔助欄位
     df['gross_win'] = df['PnL'].apply(lambda x: x if x > 0 else 0)
     df['gross_loss'] = df['PnL'].apply(lambda x: abs(x) if x <= 0 else 0)
     df['is_win'] = (df['PnL'] > 0).astype(int)
     df['is_loss'] = (df['PnL'] <= 0).astype(int)
     
-    # 3. [關鍵修正] 無論什麼模式，都先對「全體資料」進行累計計算 (Cumsum)
-    # 這樣才能「保留前面的數值累計」
+    # 全局累計計算 (Cumsum)
     s_pnl = df['PnL'].cumsum()
     s_risk = df['Risk_Amount'].cumsum()
     s_g_win = df['gross_win'].cumsum()
@@ -214,7 +210,7 @@ def calculate_trends(df, mode='cumulative', window=50):
     s_c_win = df['is_win'].cumsum()
     s_c_loss = df['is_loss'].cumsum()
 
-    # --- KPI 計算 (基於全歷史累計) ---
+    # KPI 計算
     df['Expectancy'] = s_pnl / s_risk.replace(0, np.nan)
     
     df['Profit Factor'] = s_g_win / s_g_loss.replace(0, np.nan)
@@ -224,7 +220,7 @@ def calculate_trends(df, mode='cumulative', window=50):
     avg_loss = s_g_loss / s_c_loss.replace(0, np.nan)
     df['Payoff Ratio'] = avg_win / avg_loss.replace(0, np.nan)
     
-    # --- R Squared (基於全歷史累計) ---
+    # R Squared 計算 (基於全局資金曲線)
     equity_curve = df['PnL'].cumsum()
     x_axis = pd.Series(df.index, index=df.index)
     r = equity_curve.expanding(min_periods=3).corr(x_axis)
@@ -232,8 +228,7 @@ def calculate_trends(df, mode='cumulative', window=50):
 
     df = df.fillna(0)
     
-    # 4. [關鍵修正] 計算完畢後，如果是 'recent' 模式，才進行切片 (Tail)
-    # 這樣做到了：數值是延續的，但顯示範圍是局部的
+    # 如果是 Recent 模式，只回傳最後 window 筆 (切片顯示)
     if mode == 'recent':
         df = df.tail(window).copy()
     
@@ -315,9 +310,7 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
     # --- Tab 2: 趨勢分析 ---
     with tab2:
         if df_kpi is not None and not df_kpi.empty:
-            
             total_rows = len(df_kpi)
-            st.markdown(f"**📊 資料來源：** Excel 分頁 `期望值`，共讀取到 **{total_rows}** 筆有效交易資料。")
             
             cc1, cc2 = st.columns([1, 2])
             with cc1:
@@ -325,27 +318,13 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
             
             max_window = max(10, total_rows)
             window_size = 50
-            mode_key = 'cumulative' # default
+            mode_key = 'cumulative'
 
             if "Recent" in calc_mode:
                 with cc2:
-                    window_size = st.slider(
-                        "只顯示最近幾筆交易?", 
-                        min_value=10, 
-                        max_value=max_window, 
-                        value=min(50, max_window), 
-                        step=10
-                    )
+                    window_size = st.slider("只顯示最近幾筆交易?", min_value=10, max_value=max_window, value=min(50, max_window), step=10)
                 mode_key = 'recent'
-                
-                # 計算範圍顯示
-                start_idx = max(1, total_rows - window_size + 1)
-                st.info(f"💡 顯示範圍：僅顯示第 **{start_idx}** 筆 到 第 **{total_rows}** 筆的交易走勢 (數值為歷史累計，僅截取尾端檢視)。")
-                
-            else:
-                mode_key = 'cumulative'
-
-            # 運算邏輯：先算完，再切片
+            
             df_trends = calculate_trends(df_kpi, mode=mode_key, window=window_size)
             
             if not df_trends.empty:
@@ -392,7 +371,6 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi):
                 fig.update_yaxes(showgrid=True, gridcolor='#eee')
                 
                 st.plotly_chart(fig, use_container_width=True, key=chart_key)
-                
             else:
                 st.info("無數據可繪製。")
         else:
