@@ -21,20 +21,31 @@ def get_expectancy_data(xls):
         # 讀取資料
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # 欄位選取：日期(0), 策略(1), 損益(11), R(13)
+        # 欄位選取：
+        # 日期(0), 策略(1), 風險金額(8), 損益(11), R(13)
         if df.shape[1] < 14:
             return None, "表格欄位不足 14 欄，請檢查格式。"
 
-        df_clean = df.iloc[:, [0, 1, 11, 13]].copy()
-        df_clean.columns = ['Date', 'Strategy', 'PnL', 'R']
+        # 選取這 5 個關鍵欄位
+        df_clean = df.iloc[:, [0, 1, 8, 11, 13]].copy()
+        df_clean.columns = ['Date', 'Strategy', 'Risk_Amount', 'PnL', 'R']
 
         df_clean = df_clean.dropna(subset=['Date']) 
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
-        df_clean['PnL'] = clean_numeric(df_clean['PnL'])
-        df_clean['R'] = clean_numeric(df_clean['R'])
         
-        # 移除無效交易
-        df_clean = df_clean.dropna(subset=['PnL', 'R'])
+        # 數字轉型
+        for col in ['Risk_Amount', 'PnL', 'R']:
+            df_clean[col] = clean_numeric(df_clean[col])
+        
+        # 移除無效交易 (損益或風險是空的)
+        df_clean = df_clean.dropna(subset=['PnL', 'Risk_Amount'])
+        
+        # 確保風險金額是正數 (避免分母為負導致計算錯誤)
+        df_clean['Risk_Amount'] = df_clean['Risk_Amount'].abs()
+        
+        # 移除風險為 0 的資料 (避免除以零)
+        df_clean = df_clean[df_clean['Risk_Amount'] > 0]
+
         return df_clean.sort_values('Date'), None
 
     except Exception as e:
@@ -42,12 +53,7 @@ def get_expectancy_data(xls):
 
 def calculate_kpis(df):
     """
-    計算黃金 5 指標：
-    1. Expectancy R (每筆平均R / 總損益除以總風險的概念)
-    2. Profit Factor (獲利因子 / 取代總獲利除以總風險)
-    3. Win Rate
-    4. Payoff Ratio
-    5. SQN
+    計算黃金 5 指標 (依據用戶要求修正 Expectancy 算法)
     """
     total_trades = len(df)
     if total_trades == 0: return None
@@ -58,6 +64,11 @@ def calculate_kpis(df):
     # 1. 基礎數據
     gross_profit = wins['PnL'].sum()
     gross_loss = abs(losses['PnL'].sum())
+    total_pnl = df['PnL'].sum()
+    
+    # --- 🔥 關鍵修正：改用 (總損益 / 總風險) ---
+    total_risk = df['Risk_Amount'].sum()
+    expectancy_custom = total_pnl / total_risk if total_risk > 0 else 0
     
     # 2. 勝率
     win_rate = len(wins) / total_trades
@@ -67,24 +78,21 @@ def calculate_kpis(df):
     avg_loss = abs(losses['PnL'].mean()) if len(losses) > 0 else 0
     payoff_ratio = avg_win / avg_loss if avg_loss > 0 else 0
     
-    # 4. Expectancy R (你的公式：總損益 / 總風險 的數學等價版)
-    # 直接算 R 的平均值最準確
-    expectancy_r = df['R'].mean()
-    
-    # 5. Profit Factor (獲利因子 - 取代原本的公式 B)
-    # 判斷系統是否賺錢的最快指標 (>1 賺錢, <1 賠錢)
+    # 4. Profit Factor (獲利因子)
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
     
-    # 6. SQN (系統品質)
+    # 5. SQN (系統品質) - 分子改用精確期望值
+    # SQN = sqrt(N) * (Expectancy / StdDev of R)
     r_std = df['R'].std()
-    sqn = (expectancy_r / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
+    sqn = (expectancy_custom / r_std * np.sqrt(total_trades)) if r_std > 0 else 0
     
     return {
         "Total Trades": total_trades,
-        "Total PnL": df['PnL'].sum(),
+        "Total PnL": total_pnl,
+        "Total Risk": total_risk,
         "Win Rate": win_rate,
         "Payoff Ratio": payoff_ratio,
-        "Expectancy R": expectancy_r,
+        "Expectancy Custom": expectancy_custom, # 你的客製化指標
         "Profit Factor": profit_factor,
         "SQN": sqn
     }
@@ -104,12 +112,12 @@ def display_expectancy_lab(xls):
     # --- 儀表板顯示 ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     
-    # 第一排：總結
+    # 第一排
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     k1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
     
-    # SQN 評級
+    # SQN
     sqn = kpi['SQN']
     sqn_color = "normal"
     sqn_msg = "普通"
@@ -117,17 +125,17 @@ def display_expectancy_lab(xls):
     elif 1.6 <= sqn < 2.0: sqn_msg = "及格"; sqn_color="normal"
     elif 2.0 <= sqn < 3.0: sqn_msg = "優秀"; sqn_color="inverse"
     elif sqn >= 3.0: sqn_msg = "聖杯"; sqn_color="inverse"
-    
     k2.metric("SQN 系統品質", f"{sqn:.2f}", delta=sqn_msg, delta_color=sqn_color)
     
-    # 獲利因子 (Profit Factor)
+    # 獲利因子
     pf = kpi['Profit Factor']
     pf_color = "normal"
-    if pf < 1: pf_color = "inverse" # 賠錢亮紅燈(inverse在Streamlit通常是紅/反色)
+    if pf < 1: pf_color = "inverse" 
     k2.metric("獲利因子 (PF)", f"{pf:.2f}", delta="> 1.5 為佳", delta_color="off")
 
-    # 第二排：核心結構
-    k3.metric("平均 R (Expectancy R)", f"{kpi['Expectancy R']:.2f} R", help="即：總損益 / 總風險")
+    # 第二排
+    # 🔥 這裡顯示的是你指定的算法
+    k3.metric("期望值 (Exp R)", f"{kpi['Expectancy Custom']:.2f} R", help=f"算法：總損益 ${kpi['Total PnL']:,.0f} / 總風險 ${kpi['Total Risk']:,.0f}")
     k3.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
     k4.metric("賺賠比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
 
@@ -137,6 +145,7 @@ def display_expectancy_lab(xls):
     t1, t2 = st.tabs(["📈 權益曲線 (R)", "📊 策略競技場"])
     
     with t1:
+        # 這裡的曲線依然使用單筆 R 的累加，因為這能反映「波段走勢」
         df['Cumulative R'] = df['R'].cumsum()
         fig_r = go.Figure()
         fig_r.add_trace(go.Scatter(
@@ -157,7 +166,7 @@ def display_expectancy_lab(xls):
             strat_group = df.groupby('Strategy').agg(
                 Count=('R', 'count'),
                 Sum_R=('R', 'sum'),
-                Avg_R=('R', 'mean'),
+                Avg_R=('R', 'mean'), # 這裡保留平均 R 供參考，或也可以改成 Sum_PnL / Sum_Risk
                 Win_Rate=('PnL', lambda x: (x>0).sum() / len(x))
             ).sort_values('Sum_R', ascending=False)
             
@@ -167,7 +176,6 @@ def display_expectancy_lab(xls):
             
             st.dataframe(strat_group, use_container_width=True)
             
-            # 簡單長條圖
             fig_strat = px.bar(strat_group, x=strat_group.index, y='Sum_R', 
                                title="各策略貢獻度 (Total R)", text='Sum_R')
             fig_strat.update_layout(margin=dict(t=30, b=10, l=10, r=10))
