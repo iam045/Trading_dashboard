@@ -193,10 +193,42 @@ def generate_calendar_html(year, month, pnl_dict):
     return html
 
 # ==========================================
-# 2. UI 顯示邏輯 (Fragment 優化)
+# 2. UI 顯示邏輯 (Fragment 局部刷新區塊)
 # ==========================================
 
-# 關鍵優化：使用 @st.fragment 讓這塊區域可以獨立刷新，不影響整頁
+@st.fragment
+def draw_kelly_fragment(kpi):
+    # 這裡移除 st.expander，直接顯示內容
+    st.markdown("#### 🎰 資金管理控制台 (Kelly Criterion)")
+    
+    k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
+    with k1: 
+        capital = st.number_input("目前本金", value=300000, step=10000)
+    
+    with k2: 
+        # 設定選項：1/5 到 1/8
+        fraction_options = [1/5, 1/6, 1/7, 1/8]
+        # 預設索引：1/7 是列表中的第 3 個 (index 2)
+        default_idx = 2 
+        
+        kelly_frac = st.selectbox(
+            "凱利倍數", 
+            fraction_options, 
+            index=default_idx, 
+            format_func=lambda x: f"1/{int(1/x)} Kelly"
+        )
+    
+    # 計算邏輯
+    full_kelly_val = kpi.get('Full Kelly', 0)
+    # 確保不出現負的建議倉位 (如果 Full Kelly 是負的，就建議 0)
+    adj_kelly = max(0, full_kelly_val * kelly_frac)
+    risk_amt = capital * adj_kelly
+    
+    k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
+    k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
+    
+    st.markdown("---") # 底部分隔線，保持版面整潔
+
 @st.fragment
 def draw_calendar_fragment(df_cal, sheet_info_cal):
     st.markdown(f"#### 📅 交易月曆 ({sheet_info_cal})")
@@ -212,7 +244,6 @@ def draw_calendar_fragment(df_cal, sheet_info_cal):
         if len(unique_months) > 0:
             sel_col, _ = st.columns([1, 4]) 
             with sel_col:
-                # 這個 selectbox 改變時，只會重新執行 draw_calendar_fragment 函式
                 selected_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
             
             y, m = selected_period.year, selected_period.month
@@ -254,7 +285,7 @@ def draw_calendar_fragment(df_cal, sheet_info_cal):
 def display_expectancy_lab(xls):
     df_kpi, err_kpi = get_expectancy_data(xls)
     
-    # 讀取日報表 (只讀最新2個月，速度快)
+    # 讀取日報表 (只讀最新2個月)
     df_cal, err_cal, sheet_info_cal = get_daily_report_data(xls)
 
     if err_kpi:
@@ -265,7 +296,7 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df_kpi)
     
-    # --- 上半部：靜態顯示區 (不會因為選月份而閃爍) ---
+    # --- 1. 系統體檢報告 (靜態) ---
     st.markdown("### 🏥 系統體檢報告 (System Health)")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}")
@@ -285,15 +316,8 @@ def display_expectancy_lab(xls):
     d5.empty()
     st.markdown("---")
 
-    with st.expander("🎰 資金管理控制台 (Kelly Criterion)", expanded=True):
-        k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
-        with k1: capital = st.number_input("目前本金", value=300000, step=10000)
-        with k2: kelly_frac = st.selectbox("凱利倍數", [1.0, 0.5, 0.25, 0.1], index=2, format_func=lambda x: f"Full ({x})" if x==1 else f"Fractional ({x})")
-        adj_kelly = max(0, kpi['Full Kelly'] * kelly_frac)
-        risk_amt = capital * adj_kelly
-        k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
-        k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
-    st.markdown("---")
+    # --- 2. 資金管理區 (局部刷新 Fragment) ---
+    draw_kelly_fragment(kpi)
 
-    # --- 下半部：日曆互動區 (使用 Fragment 獨立刷新) ---
+    # --- 3. 交易日曆區 (局部刷新 Fragment) ---
     draw_calendar_fragment(df_cal, sheet_info_cal)
