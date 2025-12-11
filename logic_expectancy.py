@@ -6,84 +6,102 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
-# 0. UI 風格與 CSS 注入器 (UI Master Class)
+# 0. UI 風格與 CSS 注入器 (Modern Only)
 # ==========================================
 
-def inject_custom_css(theme_mode):
+def inject_custom_css():
     """
-    根據選擇的模式注入 CSS 樣式
+    鎖定現代極簡風格 (Modern Minimalist)
+    強調置中對齊、#81C7D4 主色調、卡片陰影
     """
-    css = ""
-    
-    if theme_mode == "💎 現代極簡 (Modern)":
-        css = """
-        <style>
-            /* 全局字體與背景優化 */
-            .stApp { background-color: #f8f9fa; }
-            
-            /* Metric 卡片樣式 */
-            div[data-testid="stMetric"] {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                padding: 15px;
-                border-radius: 12px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-                transition: transform 0.2s;
-            }
-            div[data-testid="stMetric"]:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-            }
-            div[data-testid="stMetricLabel"] { font-size: 14px; color: #6b7280; }
-            div[data-testid="stMetricValue"] { font-size: 24px; font-weight: 700; color: #111827; }
-            
-            /* Tab 樣式 */
-            .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-            .stTabs [data-baseweb="tab"] {
-                height: 40px; white-space: pre-wrap; background-color: #fff; border-radius: 8px;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.05); border: 1px solid #eee; gap: 1px;
-            }
-            .stTabs [aria-selected="true"] { background-color: #eef2ff !important; color: #4f46e5 !important; border-color: #c7d2fe !important; }
-        </style>
-        """
-        chart_theme = "plotly_white"
-        
-    elif theme_mode == "🌑 暗夜操盤 (Dark Pro)":
-        css = """
-        <style>
-            /* Metric 卡片樣式 - 暗黑版 */
-            div[data-testid="stMetric"] {
-                background-color: #1e1e1e;
-                border: 1px solid #333;
-                padding: 10px 15px;
-                border-radius: 4px;
-                border-left: 3px solid #00e676; /* 螢光綠裝飾 */
-            }
-            div[data-testid="stMetricLabel"] { font-family: 'Consolas', monospace; color: #888; text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
-            div[data-testid="stMetricValue"] { font-family: 'Consolas', monospace; color: #fff; }
-            div[data-testid="stMetricDelta"] svg { fill: #00e676 !important; }
-            
-            /* 全局文字 */
-            p, label, span { color: #cfcfcf !important; }
-        </style>
-        """
-        chart_theme = "plotly_dark"
-        
-    else: # 📑 經典資訊流 (Classic)
-        css = """
-        <style>
-            div[data-testid="stMetric"] {
-                background-color: #fff;
-                border-bottom: 2px solid #ccc;
-                padding: 10px;
-            }
-            div[data-testid="stMetricValue"] { color: #2c3e50; font-family: 'Georgia', serif; }
-        </style>
-        """
-        chart_theme = "simple_white"
+    css = """
+    <style>
+        /* 引入字體 (選用系統預設乾淨字體) */
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
 
+        html, body, [class*="css"] {
+            font-family: 'Roboto', sans-serif;
+            color: #333;
+        }
+
+        /* 背景色 */
+        .stApp { background-color: #f8f9fa; }
+
+        /* 全局置中設定 */
+        .block-container {
+            text-align: center;
+        }
+
+        /* 標題置中 */
+        h1, h2, h3, p {
+            text-align: center !important;
+        }
+
+        /* Metric 卡片樣式 - 強制置中 */
+        div[data-testid="stMetric"] {
+            background-color: #ffffff;
+            border: 1px solid #eee;
+            padding: 20px 10px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+        
+        div[data-testid="stMetric"]:hover {
+            transform: translateY(-5px);
+            border-color: #81C7D4;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            font-size: 14px;
+            color: #888;
+            justify-content: center; /* Flex置中 */
+            width: 100%;
+        }
+
+        div[data-testid="stMetricValue"] {
+            font-size: 26px;
+            font-weight: 600;
+            color: #333;
+            text-align: center;
+        }
+        
+        /* Delta 顏色調整 (讓紅綠更柔和) */
+        div[data-testid="stMetricDelta"] svg {
+            
+        }
+
+        /* Tab 樣式優化 */
+        .stTabs [data-baseweb="tab-list"] {
+            justify-content: center;
+            gap: 20px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background-color: transparent;
+            border: none;
+            font-weight: 600;
+            color: #aaa;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            color: #81C7D4 !important;
+            border-bottom: 2px solid #81C7D4 !important;
+        }
+        
+        /* 按鈕與輸入框置中 */
+        .stSelectbox, .stNumberInput, .stSlider {
+            text-align: center;
+        }
+    </style>
+    """
     st.markdown(css, unsafe_allow_html=True)
-    return chart_theme
+    return "plotly_white"
 
 # ==========================================
 # 1. 基礎運算與資料讀取
@@ -215,43 +233,39 @@ def calculate_kpis(df):
         "Full Kelly": full_kelly
     }
 
-def generate_calendar_html(year, month, pnl_dict, theme_mode):
+def generate_calendar_html(year, month, pnl_dict):
     """
-    根據不同風格生成不同顏色的日曆
+    生成現代極簡風格的日曆 HTML
     """
     cal_obj = calendar.Calendar(firstweekday=6)
     month_days = cal_obj.monthdayscalendar(year, month)
     
-    # 風格配色定義
-    if "Modern" in theme_mode:
-        bg_col = "#ffffff"
-        text_col = "#333"
-        win_bg = "#dcfce7"; win_txt = "#166534" # 柔和綠
-        loss_bg = "#fee2e2"; loss_txt = "#991b1b" # 柔和紅
-        border_col = "#f3f4f6"
-    elif "Dark" in theme_mode:
-        bg_col = "#262626"
-        text_col = "#ddd"
-        win_bg = "#064e3b"; win_txt = "#4ade80" # 深綠底亮綠字
-        loss_bg = "#450a0a"; loss_txt = "#f87171" # 深紅底亮紅字
-        border_col = "#404040"
-    else: # Classic
-        bg_col = "#fff"
-        text_col = "#000"
-        win_bg = "#ccffcc"; win_txt = "#006400"
-        loss_bg = "#ffcccc"; loss_txt = "#8b0000"
-        border_col = "#ccc"
+    # 極簡風格配色 (#81C7D4)
+    bg_col = "#ffffff"
+    text_col = "#333"
+    # 獲利色 (柔和青/藍)
+    win_bg = "#e0f7fa"; win_txt = "#006064"
+    # 虧損色 (柔和紅)
+    loss_bg = "#ffebee"; loss_txt = "#c62828"
+    border_col = "#f1f1f1"
 
     html = f"""
     <style>
-        .cal-table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; }}
-        .cal-th {{ text-align: center; color: #888; font-size: 11px; padding: 8px 0; border-bottom: 1px solid {border_col}; }}
+        .cal-table {{ width: 100%; border-collapse: separate; border-spacing: 5px; font-family: 'Roboto', sans-serif; margin: 0 auto; }}
+        .cal-th {{ text-align: center; color: #aaa; font-size: 10px; font-weight: 400; padding: 10px 0; }}
         .cal-td {{ 
-            height: 80px; vertical-align: top; border: 1px solid {border_col}; padding: 4px; position: relative; 
+            height: 70px; width: 14%; vertical-align: middle; 
+            border-radius: 12px; 
             background-color: {bg_col}; color: {text_col};
+            box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+            border: 1px solid {border_col};
+            position: relative;
+            transition: all 0.2s;
         }}
-        .day-num {{ font-size: 12px; color: #aaa; margin-bottom: 2px; }}
-        .day-pnl {{ font-size: 13px; font-weight: bold; text-align: right; position: absolute; bottom: 6px; right: 6px; }}
+        .cal-td:hover {{ border-color: #81C7D4; transform: translateY(-2px); }}
+        .day-content {{ display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }}
+        .day-num {{ font-size: 12px; color: #bbb; margin-bottom: 2px; }}
+        .day-pnl {{ font-size: 13px; font-weight: 600; }}
     </style>
     <table class="cal-table"><thead><tr>
     <th class="cal-th">SUN</th><th class="cal-th">MON</th><th class="cal-th">TUE</th><th class="cal-th">WED</th><th class="cal-th">THU</th><th class="cal-th">FRI</th><th class="cal-th">SAT</th>
@@ -261,7 +275,7 @@ def generate_calendar_html(year, month, pnl_dict, theme_mode):
         html += "<tr>"
         for day in week:
             if day == 0:
-                html += f"<td class='cal-td' style='background-color: {bg_col}; opacity: 0.5;'></td>"
+                html += f"<td class='cal-td' style='background-color: transparent; border: none; box-shadow: none;'></td>"
                 continue
             
             date_key = f"{year}-{month:02d}-{day:02d}"
@@ -278,9 +292,9 @@ def generate_calendar_html(year, month, pnl_dict, theme_mode):
                     style = f"background-color: {loss_bg}; color: {loss_txt};"
                     pnl_text = f"-${abs(day_pnl):,.0f}"
                 else:
-                    pnl_text = "$0"
+                    pnl_text = "-"
             
-            html += f"<td class='cal-td' style='{style}'><div class='day-num'>{day}</div><div class='day-pnl'>{pnl_text}</div></td>"
+            html += f"<td class='cal-td' style='{style}'><div class='day-content'><div class='day-num'>{day}</div><div class='day-pnl'>{pnl_text}</div></div></td>"
         html += "</tr>"
     html += "</tbody></table>"
     return html
@@ -334,11 +348,13 @@ def calculate_trends(df, mode='cumulative', window=50):
 
 @st.fragment
 def draw_kelly_fragment(kpi):
-    # 簡單的 CSS 調整讓 Slider 和 Selectbox 對齊
-    k1, k2, k3, k4 = st.columns([1.2, 1.2, 1, 1])
-    with k1: 
+    # 置中版面
+    st.markdown("<h4 style='text-align: center; color: #888;'>Position Sizing (Kelly)</h4>", unsafe_allow_html=True)
+    c_center = st.columns([1, 2, 2, 2, 2, 1]) # 使用 padding 把內容擠到中間
+    
+    with c_center[1]: 
         capital = st.number_input("目前本金", value=300000, step=10000)
-    with k2: 
+    with c_center[2]: 
         fraction_options = [1/5, 1/6, 1/7, 1/8]
         kelly_frac = st.selectbox("凱利倍數", fraction_options, index=2, format_func=lambda x: f"1/{int(1/x)} Kelly")
         
@@ -346,11 +362,14 @@ def draw_kelly_fragment(kpi):
     adj_kelly = max(0, full_kelly_val * kelly_frac)
     risk_amt = capital * adj_kelly
     
-    k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
-    k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
+    with c_center[3]:
+        st.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
+    with c_center[4]:
+        st.metric("建議單筆風險", f"${risk_amt:,.0f}")
 
 @st.fragment
-def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme):
+def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, chart_theme):
+    # 置中 Tabs
     tab1, tab2 = st.tabs(["📅 交易日曆", "📈 趨勢分析"])
     
     # --- Tab 1: 日曆 ---
@@ -361,29 +380,38 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme
             unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
             
             if len(unique_months) > 0:
-                c_sel, _ = st.columns([1, 4])
-                with c_sel:
-                    sel_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector')
+                # 月份選擇置中
+                c_a, c_b, c_c = st.columns([2, 1, 2])
+                with c_b:
+                    sel_period = st.selectbox("選擇月份", unique_months, index=0, key='cal_month_selector', label_visibility="collapsed")
                 
                 y, m = sel_period.year, sel_period.month
-                month_pnl = df_cal[df_cal['Date'].dt.to_period('M') == sel_period]['DayPnL']
+                month_data = df_cal[df_cal['Date'].dt.to_period('M') == sel_period]
+                month_pnl_series = month_data['DayPnL']
                 
-                c_cal, c_stat = st.columns([3, 1])
-                with c_cal:
-                    st.markdown(f"**{sel_period.strftime('%B %Y')}**")
-                    st.markdown(generate_calendar_html(y, m, daily_pnl, theme_mode), unsafe_allow_html=True)
+                # 計算月損益與日最大/小 (Requested Feature)
+                m_total_pnl = month_pnl_series.sum()
                 
-                with c_stat:
-                    # 統計數據卡片化
-                    m_pnl = month_pnl.sum()
-                    m_win = month_pnl[month_pnl > 0].count()
-                    m_loss = month_pnl[month_pnl < 0].count()
-                    m_rate = m_win / (m_win + m_loss) if (m_win + m_loss) > 0 else 0
-                    
-                    st.metric("月損益", f"${m_pnl:,.0f}")
-                    st.metric("月勝率", f"{m_rate:.1%}")
-                    st.write(f"📈 獲利: **{m_win}** 天")
-                    st.write(f"📉 虧損: **{m_loss}** 天")
+                # 過濾出有交易的日子計算最大獲利/虧損
+                wins = month_pnl_series[month_pnl_series > 0]
+                losses = month_pnl_series[month_pnl_series < 0]
+                
+                day_max_win = wins.max() if not wins.empty else 0
+                day_max_loss = losses.min() if not losses.empty else 0
+
+                # 顯示上方數據列 (置中)
+                st.markdown("---")
+                stat_c1, stat_c2, stat_c3 = st.columns(3)
+                
+                # 使用 delta_color="off" 保持極簡風格，或者自定義顏色
+                stat_c1.metric("本月淨損益", f"${m_total_pnl:,.0f}", delta=None)
+                stat_c2.metric("日最大獲利", f"+${day_max_win:,.0f}", delta="Best Day", delta_color="normal")
+                stat_c3.metric("日最大虧損", f"-${abs(day_max_loss):,.0f}", delta="Worst Day", delta_color="inverse")
+                st.markdown("---")
+
+                # 顯示日曆
+                st.markdown(f"<h3 style='margin-bottom: 20px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+                st.markdown(generate_calendar_html(y, m, daily_pnl), unsafe_allow_html=True)
             else:
                 st.info("無有效月份")
         else:
@@ -396,26 +424,23 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme
             
             # 控制列容器化
             with st.container():
-                c1, c2 = st.columns([1, 2])
-                with c1:
+                c1, c2, c3 = st.columns([1, 2, 1])
+                with c2:
                     mode = st.radio("顯示模式", ["Cumulative (全歷史)", "Recent (最近 N 筆)"], horizontal=True)
                 
                 win_size = 50
                 mode_key = 'cumulative'
                 if "Recent" in mode:
-                    with c2:
+                    c_sl1, c_sl2, c_sl3 = st.columns([1, 2, 1])
+                    with c_sl2:
                         win_size = st.slider("分析筆數", 10, max(10, total), min(50, total), 10)
                     mode_key = 'recent'
-                    start = max(1, total - win_size + 1)
-                    st.caption(f"目前顯示: 第 {start} 筆 ~ 第 {total} 筆 (數值為累計，僅顯示尾端)")
                 
             df_t = calculate_trends(df_kpi, mode_key, win_size)
             
             if not df_t.empty:
-                # 繪圖設定 (依風格調整顏色)
-                line_colors = ['#636EFA', '#00CC96', '#EF553B', '#AB63FA']
-                if "Dark" in theme_mode:
-                    line_colors = ['#29b6f6', '#00e676', '#ff1744', '#d500f9'] # 螢光色
+                # 繪圖設定 (Modern Style #81C7D4)
+                line_colors = ['#81C7D4', '#FF8A65', '#BA68C8', '#4DB6AC']
                 
                 fig = make_subplots(rows=2, cols=2, vertical_spacing=0.15,
                                     subplot_titles=("期望值 (Expectancy)", "獲利因子 (Profit Factor)", 
@@ -423,7 +448,6 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme
                 
                 hover = "日期: %{x}<br>數值: %{y:.2f}<br>序號: %{customdata[0]}<extra></extra>"
                 
-                # 簡化繪圖代碼
                 metrics = [('Expectancy', 0), ('Profit Factor', 1), ('Payoff Ratio', 2), ('R Squared', 3)]
                 for col_name, idx in metrics:
                     r, c = (idx // 2) + 1, (idx % 2) + 1
@@ -431,11 +455,18 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme
                         x=df_t['Date'], y=df_t[col_name],
                         customdata=df_t[['Original_Trade_Num']], hovertemplate=hover,
                         mode='lines', name=col_name,
-                        line=dict(color=line_colors[idx], width=2)
+                        line=dict(color=line_colors[idx], width=2.5)
                     ), row=r, col=c)
 
-                fig.update_layout(height=500, template=chart_theme, margin=dict(l=20,r=20,t=40,b=20), showlegend=False)
-                st.plotly_chart(fig, use_container_width=True, key=f"chart_{theme_mode}_{mode_key}")
+                fig.update_layout(
+                    height=500, 
+                    template=chart_theme, 
+                    margin=dict(l=20,r=20,t=40,b=20), 
+                    showlegend=False,
+                    paper_bgcolor='rgba(0,0,0,0)', # 透明背景
+                    plot_bgcolor='rgba(0,0,0,0)'
+                )
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{mode_key}")
             else:
                 st.info("無數據")
         else:
@@ -446,19 +477,11 @@ def draw_bottom_fragment(df_cal, sheet_info_cal, df_kpi, theme_mode, chart_theme
 # ==========================================
 
 def display_expectancy_lab(xls):
-    # 1. 最上方放置風格切換器 (Radio Button 橫向)
-    st.markdown("### 🎨 介面風格設定")
-    theme_mode = st.radio(
-        "", 
-        ["💎 現代極簡 (Modern)", "🌑 暗夜操盤 (Dark Pro)", "📑 經典資訊流 (Classic)"], 
-        index=0, 
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    st.markdown("---") # 分隔線
-    
-    # 注入 CSS 並取得圖表主題
-    chart_theme = inject_custom_css(theme_mode)
+    # 注入 CSS (只有一種風格)
+    chart_theme = inject_custom_css()
+
+    st.markdown("<h1>TRADING PERFORMANCE</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #999; margin-bottom: 40px;'>現代極簡交易儀表板</p>", unsafe_allow_html=True)
 
     # 讀取資料
     df_kpi, err_kpi = get_expectancy_data(xls)
@@ -470,22 +493,31 @@ def display_expectancy_lab(xls):
     # 計算 KPI
     kpi = calculate_kpis(df_kpi)
     
-    # 2. 顯示 KPI (會自動應用 CSS 樣式)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}", help="淨損益總和")
-    c2.metric("期望值 (Exp)", f"{kpi['Expectancy']:.2f} R", help="每單位風險預期獲利")
-    c3.metric("獲利因子 (PF)", f"{kpi['Profit Factor']:.2f}", delta=">1.5 佳" if kpi['Profit Factor']>1.5 else None)
-    c4.metric("盈虧比 (Payoff)", f"{kpi['Payoff Ratio']:.2f}")
-    c5.metric("勝率 (Win Rate)", f"{kpi['Win Rate']*100:.1f}%")
+    # ----------------------------------------------------
+    # 2. 顯示 KPI (帶有 Tooltip 公式的定義)
+    # ----------------------------------------------------
     
-    # 增加一點間距
+    # Tooltip 內容定義
+    help_exp = "定義: 每筆交易長期的平均預期收益。\n公式: (勝率 × 平均獲利) - (敗率 × 平均虧損)"
+    help_pf = "定義: 總獲利金額與總虧損金額的比率，大於 1.5 為佳。\n公式: 總獲利金額 ÷ 總虧損金額"
+    help_payoff = "定義: 平均每筆獲利金額與平均每筆虧損金額的比例。\n公式: 平均獲利 ÷ 平均虧損"
+    help_win = "定義: 獲利交易次數佔總交易次數的比例。\n公式: 獲利筆數 ÷ 總交易筆數"
+    help_rsq = "定義: 權益曲線的回歸判定係數，越接近 1 代表獲利越穩定，波動越小。"
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("總損益", f"${kpi['Total PnL']:,.0f}")
+    c2.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=help_exp) # Tooltip
+    c3.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=help_pf) # Tooltip
+    c4.metric("盈虧比", f"{kpi['Payoff Ratio']:.2f}", help=help_payoff) # Tooltip
+    c5.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=help_win) # Tooltip
+    
     st.write("") 
     
     d1, d2, d3, d4, d5 = st.columns(5)
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
-    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次", delta="High", delta_color="normal")
-    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次", delta="Risk", delta_color="inverse")
-    d4.metric("曲線穩定度 (R²)", f"{kpi['R Squared']:.2f}")
+    d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次")
+    d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次")
+    d4.metric("穩定度 R²", f"{kpi['R Squared']:.2f}", help=help_rsq) # Tooltip
     d5.empty()
     
     st.markdown("---")
@@ -493,5 +525,7 @@ def display_expectancy_lab(xls):
     # 3. 資金管理 (局部刷新)
     draw_kelly_fragment(kpi)
     
-    # 4. 底部圖表 (傳入風格參數)
-    draw_bottom_fragment(df_cal, None, df_kpi, theme_mode, chart_theme)
+    st.markdown("---")
+    
+    # 4. 底部圖表
+    draw_bottom_fragment(df_cal, None, df_kpi, chart_theme)
