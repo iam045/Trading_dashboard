@@ -198,8 +198,7 @@ def generate_calendar_html(year, month, pnl_dict):
 
 @st.fragment
 def draw_kelly_fragment(kpi):
-    # 這裡移除 st.expander，直接顯示內容
-    st.markdown("#### 🎰 資金管理控制台 (Kelly Criterion)")
+    # --- 移除標題 ---
     
     k1, k2, k3, k4 = st.columns([1, 1, 1, 1])
     with k1: 
@@ -220,18 +219,17 @@ def draw_kelly_fragment(kpi):
     
     # 計算邏輯
     full_kelly_val = kpi.get('Full Kelly', 0)
-    # 確保不出現負的建議倉位 (如果 Full Kelly 是負的，就建議 0)
     adj_kelly = max(0, full_kelly_val * kelly_frac)
     risk_amt = capital * adj_kelly
     
     k3.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
     k4.metric("建議單筆風險", f"${risk_amt:,.0f}")
     
-    st.markdown("---") # 底部分隔線，保持版面整潔
+    st.markdown("---") 
 
 @st.fragment
 def draw_calendar_fragment(df_cal, sheet_info_cal):
-    st.markdown(f"#### 📅 交易月曆 ({sheet_info_cal})")
+    # --- 移除標題 ---
     
     if df_cal is not None and not df_cal.empty:
         df_cal['DateStr'] = df_cal['Date'].dt.strftime('%Y-%m-%d')
@@ -253,12 +251,14 @@ def draw_calendar_fragment(df_cal, sheet_info_cal):
             
             cal_col, stat_col = st.columns([3, 1])
             with cal_col:
+                # 這裡的月份顯示 (例如 December 2025) 我保留著，作為日曆的標籤，若要移除也可告知
                 st.markdown(f"**{selected_period.strftime('%B %Y')}**")
                 cal_html = generate_calendar_html(y, m, pnl_dict)
                 st.markdown(cal_html, unsafe_allow_html=True)
                 
             with stat_col:
-                st.markdown("##### 當月統計")
+                # --- 移除標題 "當月統計" ---
+                
                 m_pnl = month_data.sum()
                 m_max_win = month_data.max() if not month_data.empty and month_data.max() > 0 else 0
                 m_max_loss = month_data.min() if not month_data.empty and month_data.min() < 0 else 0
@@ -275,7 +275,6 @@ def draw_calendar_fragment(df_cal, sheet_info_cal):
                     st.metric("單日最大賺", f"${m_max_win:,.0f}", delta_color="normal")
                     st.metric("單日最大賠", f"${m_max_loss:,.0f}", delta_color="inverse")
                     
-                    # --- 新增: 月勝率 ---
                     st.metric("月勝率", f"{m_win_rate:.1%}", help="計算方式: 獲利天數 / 總交易天數")
                     
                     st.divider()
@@ -304,8 +303,8 @@ def display_expectancy_lab(xls):
 
     kpi = calculate_kpis(df_kpi)
     
-    # --- 1. 系統體檢報告 (靜態，加入 help 參數) ---
-    st.markdown("### 🏥 系統體檢報告 (System Health)")
+    # --- 移除標題 "系統體檢報告" ---
+    
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("總損益 (Net PnL)", f"${kpi['Total PnL']:,.0f}", help="所有交易的淨損益總和")
     c2.metric("期望值 (Exp)", f"{kpi['Expectancy Custom']:.2f} R", help="公式: 總損益 / 總風險金額。\n意義: 每投入 1 元風險，預期能賺回多少元 (R)。")
