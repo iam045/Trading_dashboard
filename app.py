@@ -13,13 +13,11 @@ st.title("💰 交易績效戰情室")
 # --- 2. 連線與快取設定 ---
 @st.cache_resource(ttl=60)
 def load_google_sheet():
-    """從 Google Cloud 下載 Excel 檔案"""
     try:
         if "google_sheet_id" not in st.secrets:
             return None, "請在 Streamlit Secrets 設定 'google_sheet_id'"
         
         sheet_id = st.secrets["google_sheet_id"]
-        # 加 timestamp 強制刷新
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx&t={int(time.time())}"
         
         return pd.ExcelFile(url, engine='openpyxl'), None
@@ -102,8 +100,12 @@ def plot_yearly_trend(xls, year):
 
     df_year = pd.concat(all_data)
     df_year = df_year[df_year['Date'].dt.year == year]
-    # 斷尾 (過濾未來)
-    df_year = df_year[df_year['Date'] <= pd.Timestamp.now().normalize()]
+    
+    # --- 🔥 關鍵修正：如果是未來年 (2026)，不要過濾！ ---
+    current_year = datetime.now().year
+    if year == current_year:
+        # 只有「今年」才需要砍掉未來的日期 (避免水平線)
+        df_year = df_year[df_year['Date'] <= pd.Timestamp.now().normalize()]
     
     if df_year.empty: return None
 
@@ -174,7 +176,6 @@ else:
 
     # === Tab 2: 年度回顧 (自動年份偵測) ===
     with tab2:
-        # 自動偵測年份邏輯
         detected_years = set()
         for name in xls.sheet_names:
             clean_name = re.sub(r"[ _－/.-]", "", str(name))
@@ -202,11 +203,8 @@ else:
             progress_bar.progress((i + 1) / len(target_years))
         progress_bar.empty()
 
-    # === 🔧 系統診斷室 (除錯專用) ===
-    with st.expander("🔧 為什麼新的一年沒出現？(診斷區)"):
-        st.write("如果這裡沒有出現你的新分頁，代表 **Google 還沒把資料傳過來** (快取延遲)。")
-        st.write("請嘗試：Google 試算表 -> 檔案 -> 共用 -> 發布到網路 -> **停止發布** -> **重新發布**。")
-        st.divider()
-        st.write(f"程式目前讀到的所有分頁 (共 {len(xls.sheet_names)} 頁)：")
+    # === 🔧 系統診斷室 (驗證用) ===
+    with st.expander("🔧 系統診斷室 (點此檢查 Google 是否有傳回 2026)"):
+        st.write("程式讀到的所有分頁清單：")
         st.code(xls.sheet_names)
         st.write(f"程式自動偵測到的年份：{target_years}")
