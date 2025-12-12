@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import re
-# 引入我們拆分出去的三個模組
+
+# 引入我們拆分出去的模組 (含新增的 logic_advanced)
 from utils import load_google_sheet 
 from logic_yearly import get_yearly_data_and_chart 
-from logic_expectancy import display_expectancy_lab # 新增這行
+from logic_expectancy import display_expectancy_lab 
+from logic_advanced import display_advanced_analysis # <--- [NEW] 新增這行
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="私募基金戰情室", layout="wide")
@@ -22,14 +24,14 @@ if err_msg:
     st.error(err_msg)
     st.stop()
 
-# --- 4. 分頁架構 ---
-tab1, tab2, tab3 = st.tabs(["📊 總覽儀表板", "📅 年度戰績回顧", "🧪 期望值實驗室"])
+# --- 4. 分頁架構 (新增第 4 個分頁) ---
+tab1, tab2, tab3, tab4 = st.tabs(["📊 總覽儀表板", "📅 年度戰績回顧", "🧪 期望值實驗室", "🔍 進階細項分析"])
 
 # === Tab 1: 總覽 ===
 with tab1:
     if '累積總表' in xls.sheet_names:
         try:
-            # 簡易讀取總表邏輯 (為了保持 app.py 簡潔，這段未來也可以考慮拆出去)
+            # 簡易讀取總表邏輯
             df_prev = pd.read_excel(xls, '累積總表', header=None, nrows=10)
             h_idx = -1
             for i, row in enumerate(df_prev.values):
@@ -82,5 +84,8 @@ with tab2:
 
 # === Tab 3: 期望值實驗室 (由 logic_expectancy.py 接管) ===
 with tab3:
-    # 呼叫 logic_expectancy
     display_expectancy_lab(xls)
+
+# === Tab 4: 進階細項分析 (由 logic_advanced.py 接管) ===
+with tab4:
+    display_advanced_analysis(xls)
