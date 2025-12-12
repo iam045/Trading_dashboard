@@ -92,8 +92,8 @@ def plot_strategy_performance(df):
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
-        height=500, # 加高一點讓單張圖更好看
-        margin=dict(t=50, b=50)
+        height=350, # [Modified] 調整高度為 350，與下方圖表一致
+        margin=dict(t=40, b=40)
     )
     return fig
 
@@ -111,9 +111,9 @@ def plot_cumulative_pnl_by_strategy(df):
         markers=False
     )
     fig.update_layout(
-        height=500, # 加高一點
+        height=350, # [Modified] 調整高度為 350，與下方圖表一致
         hovermode="x unified",
-        margin=dict(t=50, b=50)
+        margin=dict(t=40, b=40)
     )
     return fig
 
@@ -128,9 +128,6 @@ def plot_weekday_analysis(df):
         Win_Rate=('PnL', lambda x: (x > 0).mean())
     ).reset_index()
     
-    # 兩個圖表：左邊損益，右邊勝率
-    c1, c2 = st.columns(2)
-    
     # 圖1: 損益
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
@@ -140,7 +137,7 @@ def plot_weekday_analysis(df):
         marker_color=colors1,
         text=weekday_stats['Total_PnL'].apply(lambda x: f"${x:,.0f}")
     ))
-    fig1.update_layout(title="週一至週五：總損益表現", height=350)
+    fig1.update_layout(title="週一至週五：總損益表現", height=350) # 維持 350 為基準
     
     # 圖2: 勝率
     fig2 = go.Figure()
@@ -150,7 +147,7 @@ def plot_weekday_analysis(df):
         marker_color='#5c6bc0',
         text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}")
     ))
-    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%')
+    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%') # 維持 350 為基準
     
     return fig1, fig2
 
@@ -184,8 +181,8 @@ def plot_symbol_ranking(df):
     fig.update_layout(
         title="標的損益排行榜 (Top 5 賺錢 vs 賠錢)",
         xaxis_title="總損益 ($)",
-        height=500,
-        margin=dict(l=100) # 左邊留空給標的名稱
+        height=350, # [Modified] 統一調整高度為 350
+        margin=dict(l=100, t=40, b=40) 
     )
     return fig
 
@@ -210,7 +207,7 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 (改為上下排列) ---
+    # --- Section 1: 策略分析 (上下排列) ---
     st.subheader("1️⃣ 策略效能檢閱")
     
     # 第一張：各策略總損益 Bar Chart
