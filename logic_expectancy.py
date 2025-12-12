@@ -118,9 +118,9 @@ def inject_custom_css():
         .week-pnl { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
         .week-days { font-size: 11px; color: #999; }
 
-        /* 月統計卡片 (新) */
+        /* 月統計卡片 */
         .month-card {
-            background-color: #fff; /* 或用微不同的顏色區分 #fbfbfb */
+            background-color: #fff;
             border-radius: 12px;
             padding: 10px;
             text-align: center;
@@ -181,6 +181,7 @@ def get_daily_report_data(xls):
         try:
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
             if df.shape[1] < 8: continue 
+            # 這裡維持讀取第0欄(日期)與第7欄(損益)，請確認 Excel 中 PnL 是否在 H 欄 (Index 7)
             df_cal = df.iloc[:, [0, 7]].copy() 
             df_cal.columns = ['Date', 'DayPnL']
             df_cal['Date'] = pd.to_datetime(df_cal['Date'], errors='coerce').dt.normalize()
@@ -376,15 +377,18 @@ def draw_calendar_fragment(df_cal, theme_mode):
     
     y, m = sel_period.year, sel_period.month
     
-    # 2. 計算該月數據
+    # 2. 計算該月數據 (包含邏輯修正：排除PnL為0的日子)
     mask_month = (df_cal['Date'].dt.year == y) & (df_cal['Date'].dt.month == m)
     df_month = df_cal[mask_month].sort_values('Date') 
 
+    # 篩選實際交易日 (PnL != 0)
+    df_active = df_month[df_month['DayPnL'] != 0]
+
     m_pnl = df_month['DayPnL'].sum()
-    total_days = len(df_month)
-    win_days = df_month[df_month['DayPnL'] > 0]
-    loss_days = df_month[df_month['DayPnL'] < 0]
-    m_win_rate = (len(win_days) / total_days) if total_days > 0 else 0
+    total_active_days = len(df_active) # 分母只算有交易的日子
+    win_days = df_active[df_active['DayPnL'] > 0]
+    loss_days = df_active[df_active['DayPnL'] < 0]
+    m_win_rate = (len(win_days) / total_active_days) if total_active_days > 0 else 0
     day_max_win = win_days['DayPnL'].max() if not win_days.empty else 0
     day_max_loss = loss_days['DayPnL'].min() if not loss_days.empty else 0
 
@@ -451,7 +455,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal_obj.monthdayscalendar(y, m)
 
-    # 準備月統計卡片數據，依序為：淨損益、勝率、最大獲利、最大虧損
+    # 準備月統計卡片數據
     month_stats_data = [
         {"title": "本月淨損益", "val": f"${m_pnl:,.0f}", "color": "text-green" if m_pnl >=0 else "text-red"},
         {"title": "本月日勝率", "val": f"{m_win_rate*100:.1f}%", "color": ""},
@@ -459,7 +463,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
         {"title": "日最大虧損", "val": f"${day_max_loss:,.0f}", "color": "text-red"}
     ]
     
-    # HTML 建構：表頭增加一欄 (共9欄)
+    # HTML 建構：9欄佈局 (7天 + 1週 + 1月)
     html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
 
     week_count = 1
@@ -513,8 +517,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
         else:
             html += "<td class='summary-td'></td>"
 
-        # --- [NEW] 第 9 欄：月統計卡片 (垂直堆疊，每列一張) ---
-        # 只要行數不超過我們準備的數據數量 (4張)，就填入一張
+        # --- 第 9 欄：月統計卡片 ---
         if idx < len(month_stats_data):
             m_stat = month_stats_data[idx]
             color_cls = m_stat["color"]
