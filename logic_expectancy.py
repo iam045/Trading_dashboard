@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import calendar
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # ==========================================
 # 0. UI 風格與 CSS 注入器 (含每週結算樣式)
@@ -341,7 +340,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
         st.warning("無日報表資料"); return
 
     df_cal['DateStr'] = df_cal['Date'].dt.strftime('%Y-%m-%d')
-    # 建立快速查詢字典：日期 -> 損益
     daily_pnl_map = df_cal.groupby('DateStr')['DayPnL'].sum().to_dict()
     
     unique_months = df_cal['Date'].dt.to_period('M').drop_duplicates().sort_values(ascending=False)
@@ -365,24 +363,8 @@ def draw_calendar_fragment(df_cal, theme_mode):
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal_obj.monthdayscalendar(y, m)
     
-    # HTML 建構開始
-    # 表頭：7天 + 1個空的欄位給週結算
-    html = """
-    <div class="cal-container">
-    <table class='cal-table'>
-        <thead>
-            <tr>
-                <th class='cal-th'>Sun</th>
-                <th class='cal-th'>Mon</th>
-                <th class='cal-th'>Tue</th>
-                <th class='cal-th'>Wed</th>
-                <th class='cal-th'>Thu</th>
-                <th class='cal-th'>Fri</th>
-                <th class='cal-th'>Sat</th>
-                <th class='cal-th' style='width: 150px;'></th> </tr>
-        </thead>
-        <tbody>
-    """
+    # HTML 建構開始 (移除所有縮排以避免 Markdown 誤判)
+    html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
 
     week_count = 1
     
@@ -393,7 +375,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
         week_pnl = 0
         active_days = 0
         
-        # 先跑一次迴圈算該週總和 (為了填入右邊那欄)
         for day in week:
             if day == 0: continue
             date_key = f"{y}-{m:02d}-{day:02d}"
@@ -405,55 +386,38 @@ def draw_calendar_fragment(df_cal, theme_mode):
         # --- 2. 生成左側 7 天的格子 ---
         for day in week:
             if day == 0:
-                # 非本月日期，顯示空白格
                 html += "<td class='cal-td' style='background: transparent; border: none; box-shadow: none;'></td>"
                 continue
             
             date_key = f"{y}-{m:02d}-{day:02d}"
             day_pnl = daily_pnl_map.get(date_key, 0)
             
-            # 樣式判斷
             td_class = "cal-td"
             pnl_html = ""
             
             if day_pnl != 0:
-                # 有交易的日子
                 color_class = "bg-green" if day_pnl > 0 else "bg-red"
                 td_class += f" {color_class}"
                 sign = "+" if day_pnl > 0 else "-"
-                pnl_html = f"""
-                    <div class='day-pnl'>{sign}${abs(day_pnl):,.0f}</div>
-                    <div class='day-info'>Trade</div>
-                """
+                # 注意：這裡使用單行串接，避免縮排
+                pnl_html = f"<div class='day-pnl'>{sign}${abs(day_pnl):,.0f}</div><div class='day-info'>Trade</div>"
             else:
-                # 無交易的日子
-                pnl_html = "<div style='height: 20px;'></div>" # 佔位符
+                pnl_html = "<div style='height: 20px;'></div>"
 
-            html += f"""
-                <td class='{td_class}'>
-                    <div class='day-num'>{day}</div>
-                    {pnl_html}
-                </td>
-            """
+            # 組合 TD HTML (無縮排)
+            html += f"<td class='{td_class}'><div class='day-num'>{day}</div>{pnl_html}</td>"
         
         # --- 3. 生成右側「每週結算」卡片 (第 8 欄) ---
         w_pnl_class = "text-green" if week_pnl >= 0 else "text-red"
         w_pnl_sign = "+" if week_pnl > 0 else ("-" if week_pnl < 0 else "")
         w_pnl_str = f"${abs(week_pnl):,.0f}" if active_days > 0 else "$0"
         
-        # 只有當這週有天數存在 (包含非交易日) 才顯示，避免空行太醜
         show_card = any(d != 0 for d in week)
         
         if show_card:
-            html += f"""
-                <td class='week-summary-td'>
-                    <div class='week-card'>
-                        <div class='week-title'>Week {week_count}</div>
-                        <div class='week-pnl {w_pnl_class}'>{w_pnl_sign}{w_pnl_str}</div>
-                        <div class='week-days'>{active_days} active days</div>
-                    </div>
-                </td>
-            """
+            # 組合 Week Card HTML (無縮排)
+            card_html = f"<div class='week-card'><div class='week-title'>Week {week_count}</div><div class='week-pnl {w_pnl_class}'>{w_pnl_sign}{w_pnl_str}</div><div class='week-days'>{active_days} active days</div></div>"
+            html += f"<td class='week-summary-td'>{card_html}</td>"
             week_count += 1
         else:
             html += "<td class='week-summary-td'></td>"
