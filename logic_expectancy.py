@@ -118,22 +118,31 @@ def inject_custom_css():
         .week-pnl { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
         .week-days { font-size: 11px; color: #999; }
 
-        /* 月統計卡片 */
+        /* 月統計卡片 (更新字體與顏色) */
         .month-card {
             background-color: #fff;
             border-radius: 12px;
             padding: 10px;
             text-align: center;
             border: 1px solid #eeeeee;
-            border-left: 3px solid #81C7D4; /* 左側藍線區分 */
+            border-left: 4px solid #81C7D4; /* 左側藍線加粗一點 */
             box-shadow: 0 2px 6px rgba(0,0,0,0.02);
             height: 80px;
             display: flex;
             flex-direction: column;
             justify-content: center;
         }
-        .month-title { font-size: 11px; color: #666; margin-bottom: 4px; }
-        .month-val { font-size: 16px; font-weight: 700; color: #333; }
+        .month-title { 
+            font-size: 13px; /* 放大標題 */
+            font-weight: 600; 
+            color: #555; 
+            margin-bottom: 6px; 
+        }
+        .month-val { 
+            font-size: 20px; /* 放大數值 */
+            font-weight: 800; 
+            color: #000000 !important; /* 強制全黑 */
+        }
         
         /* 顏色定義 */
         .text-green { color: #00897b; }
@@ -181,7 +190,6 @@ def get_daily_report_data(xls):
         try:
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
             if df.shape[1] < 8: continue 
-            # 這裡維持讀取第0欄(日期)與第7欄(損益)，請確認 Excel 中 PnL 是否在 H 欄 (Index 7)
             df_cal = df.iloc[:, [0, 7]].copy() 
             df_cal.columns = ['Date', 'DayPnL']
             df_cal['Date'] = pd.to_datetime(df_cal['Date'], errors='coerce').dt.normalize()
@@ -455,12 +463,12 @@ def draw_calendar_fragment(df_cal, theme_mode):
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal_obj.monthdayscalendar(y, m)
 
-    # 準備月統計卡片數據
+    # 準備月統計卡片數據 (已移除conditioanl color)
     month_stats_data = [
-        {"title": "本月淨損益", "val": f"${m_pnl:,.0f}", "color": "text-green" if m_pnl >=0 else "text-red"},
-        {"title": "本月日勝率", "val": f"{m_win_rate*100:.1f}%", "color": ""},
-        {"title": "日最大獲利", "val": f"${day_max_win:,.0f}", "color": "text-green"},
-        {"title": "日最大虧損", "val": f"${day_max_loss:,.0f}", "color": "text-red"}
+        {"title": "本月淨損益", "val": f"${m_pnl:,.0f}"},
+        {"title": "本月日勝率", "val": f"{m_win_rate*100:.1f}%"},
+        {"title": "日最大獲利", "val": f"${day_max_win:,.0f}"},
+        {"title": "日最大虧損", "val": f"${day_max_loss:,.0f}"}
     ]
     
     # HTML 建構：9欄佈局 (7天 + 1週 + 1月)
@@ -520,11 +528,11 @@ def draw_calendar_fragment(df_cal, theme_mode):
         # --- 第 9 欄：月統計卡片 ---
         if idx < len(month_stats_data):
             m_stat = month_stats_data[idx]
-            color_cls = m_stat["color"]
+            # 這裡的 class 已經統一在 CSS 處理，不再從 Python 傳顏色
             m_card_html = f"""
             <div class='month-card'>
                 <div class='month-title'>{m_stat['title']}</div>
-                <div class='month-val {color_cls}'>{m_stat['val']}</div>
+                <div class='month-val'>{m_stat['val']}</div>
             </div>
             """
             html += f"<td class='summary-td'>{m_card_html}</td>"
