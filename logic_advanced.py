@@ -33,7 +33,7 @@ def get_advanced_data(xls):
         # 1. 去除無效資料
         df_clean = df_clean.dropna(subset=['Date', 'PnL'])
         
-        # 2. 排除損益為 0 的交易 (避免平盤單拉低勝率)
+        # 2. 排除損益為 0 的交易 (確保勝率與統計精確)
         df_clean = df_clean[df_clean['PnL'] != 0]
         
         # 增加輔助欄位
@@ -111,8 +111,7 @@ def plot_cumulative_pnl_by_strategy(df):
     return fig
 
 def plot_strategy_quality_bubble(df):
-    """[NEW] 圖3: 策略品質矩陣 (氣泡圖) - 勝率 vs 盈虧比"""
-    # 計算進階指標
+    """圖3: 策略品質矩陣 (氣泡圖)"""
     stats = df.groupby('Strategy').apply(lambda x: pd.Series({
         'Win_Rate': (x['PnL'] > 0).mean(),
         'Avg_Win': x[x['PnL'] > 0]['PnL'].mean() if not x[x['PnL'] > 0].empty else 0,
@@ -121,10 +120,8 @@ def plot_strategy_quality_bubble(df):
         'Count': len(x)
     })).reset_index()
 
-    # 計算盈虧比 (避免除以0)
+    # Payoff Ratio = Avg Win / Avg Loss
     stats['Payoff_Ratio'] = stats.apply(lambda row: row['Avg_Win'] / row['Avg_Loss'] if row['Avg_Loss'] > 0 else 0, axis=1)
-    
-    # 處理氣泡大小 (用絕對值，避免虧損策略氣泡變成負的無法顯示，但用顏色區分賺賠)
     stats['Bubble_Size'] = stats['Total_PnL'].abs()
     
     fig = px.scatter(
@@ -132,14 +129,13 @@ def plot_strategy_quality_bubble(df):
         x="Win_Rate",
         y="Payoff_Ratio",
         size="Bubble_Size",
-        color="Total_PnL", # 顏色代表賺賠
+        color="Total_PnL",
         hover_name="Strategy",
         hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True},
-        color_continuous_scale=["#26a69a", "#eeeeee", "#ef5350"], # 綠->白->紅
+        color_continuous_scale=["#26a69a", "#eeeeee", "#ef5350"],
         title="策略品質矩陣 (氣泡大小 = 總損益規模)"
     )
     
-    # 加上十字線 (勝率50%, 盈虧比1:1) 作為及格線
     fig.add_hline(y=1, line_dash="dash", line_color="gray", annotation_text="盈虧比 1:1")
     fig.add_vline(x=0.5, line_dash="dash", line_color="gray", annotation_text="勝率 50%")
 
@@ -151,54 +147,38 @@ def plot_strategy_quality_bubble(df):
     )
     return fig
 
-def plot_weekday_box_analysis(df):
-    """[NEW] 圖4: 週一~週五 損益分佈 (箱型圖)"""
-    cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
-    df_sorted = df.sort_values('Weekday')
-
-    fig = go.Figure()
-    
-    # 這裡我們不只看總和，而是看每一筆交易的分佈
-    fig.add_trace(go.Box(
-        x=df_sorted['Weekday'],
-        y=df_sorted['PnL'],
-        boxpoints='all', # 顯示所有散點
-        jitter=0.3,      # 散點寬度
-        pointpos=-1.8,   # 散點位置
-        marker=dict(color='#5c6bc0', size=2),
-        line=dict(color='#333'),
-        fillcolor='rgba(255,255,255,0)', # 透明箱體
-        name='交易分佈'
-    ))
-
-    fig.update_layout(
-        title="週一至週五：損益分佈 (Box Plot)",
-        yaxis_title="單筆損益 ($)",
-        height=350,
-        showlegend=False,
-        margin=dict(t=40, b=40)
-    )
-    return fig
-
-def plot_weekday_bar_analysis(df):
-    """圖5: 原本的週一~週五 勝率 (Bar)"""
+def plot_weekday_analysis(df):
+    """[RESTORED] 圖4 & 5: 週一~週五 總損益與勝率 (還原為長條圖)"""
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     
     weekday_stats = df.groupby('Weekday', observed=True).agg(
+        Total_PnL=('PnL', 'sum'),
         Win_Rate=('PnL', lambda x: (x > 0).mean())
     ).reset_index()
     
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
+    # 圖1: 總損益 (Bar)
+    fig1 = go.Figure()
+    colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
+    fig1.add_trace(go.Bar(
+        x=weekday_stats['Weekday'], 
+        y=weekday_stats['Total_PnL'],
+        marker_color=colors1,
+        text=weekday_stats['Total_PnL'].apply(lambda x: f"${x:,.0f}")
+    ))
+    fig1.update_layout(title="週一至週五：總損益表現", height=350)
+    
+    # 圖2: 勝率 (Bar)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
         x=weekday_stats['Weekday'], 
         y=weekday_stats['Win_Rate'],
         marker_color='#5c6bc0',
         text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}")
     ))
-    fig.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%')
-    return fig
+    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%')
+    
+    return fig1, fig2
 
 def plot_symbol_ranking(df):
     """圖6: 標的賺賠排名"""
@@ -255,14 +235,14 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 上排：基本表現
-    c1, c2 = st.columns(2)
-    with c1: st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
-    with c2: st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
+    # 上排：基本表現 (高度 350)
+    st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
+    st.write("") 
+    st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
     
-    # 下排：[NEW] 品質矩陣 (這張圖一定要看！)
+    # 下排：品質矩陣 (高度 400)
     st.plotly_chart(plot_strategy_quality_bubble(df_filtered), use_container_width=True)
-    st.caption("💡 **如何解讀氣泡圖？** X軸越右邊勝率越高，Y軸越上面賺賠比越好。右上角是大賺區，右下角是薄利多銷區。氣泡越大代表總損益越多。")
+    st.caption("💡 **如何解讀氣泡圖？** X軸越右邊勝率越高，Y軸越上面品質(盈虧比)越好。右上角是大賺區，右下角是薄利多銷區。氣泡越大代表總損益越多。")
 
 # ==========================================
 # 3. 主入口
@@ -288,16 +268,15 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 2: 週期分析 (加入箱型圖) ---
+    # --- Section 2: 週期分析 (還原為長條圖) ---
     st.subheader("2️⃣ 交易週期效應 (Day of Week)")
-    st.caption("檢查「黑色星期X」魔咒：箱型圖可看出該日的波動範圍與極端值。")
+    st.caption("檢查是否有「黑色星期X」魔咒，或是特定的獲利日。")
     
-    # 使用 [NEW] 箱型圖 + 原本的勝率圖
-    fig_day_box = plot_weekday_box_analysis(df)
-    fig_day_win = plot_weekday_bar_analysis(df)
+    # 使用還原後的長條圖函式
+    fig_day_pnl, fig_day_win = plot_weekday_analysis(df)
     
     dc1, dc2 = st.columns(2)
-    with dc1: st.plotly_chart(fig_day_box, use_container_width=True)
+    with dc1: st.plotly_chart(fig_day_pnl, use_container_width=True)
     with dc2: st.plotly_chart(fig_day_win, use_container_width=True)
 
     st.markdown("---")
