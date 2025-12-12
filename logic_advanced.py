@@ -18,22 +18,27 @@ def get_advanced_data(xls):
     try:
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # ⚠️ 欄位對應: 0=Date, 1=Strategy, 2=Symbol, 10=Risk, 11=PnL
-        needed_cols = [0, 1, 2, 10, 11] 
+        # -----------------------------------------------------------
+        # ⚠️ 欄位更新: 新增讀取第 N 欄 (Index 13) 作為 R 值
+        # 0=Date, 1=Strategy, 2=Symbol, 10=Risk, 11=PnL, 13=R
+        # -----------------------------------------------------------
+        needed_cols = [0, 1, 2, 10, 11, 13] 
         
         if df.shape[1] < max(needed_cols): 
             return None, "表格欄位不足，請檢查 logic_advanced.py 中的欄位索引"
 
         df_clean = df.iloc[:, needed_cols].copy()
-        df_clean.columns = ['Date', 'Strategy', 'Symbol', 'Risk_Amount', 'PnL']
+        df_clean.columns = ['Date', 'Strategy', 'Symbol', 'Risk_Amount', 'PnL', 'R']
 
+        # 資料清理
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         df_clean['PnL'] = pd.to_numeric(df_clean['PnL'].astype(str).str.replace(',', ''), errors='coerce')
+        df_clean['R'] = pd.to_numeric(df_clean['R'].astype(str).str.replace(',', ''), errors='coerce')
         
         # 1. 去除無效資料
         df_clean = df_clean.dropna(subset=['Date', 'PnL'])
         
-        # 2. 排除損益為 0 的交易 (確保勝率與統計精確)
+        # 2. 排除損益為 0 的交易 (避免平盤單拉低勝率)
         df_clean = df_clean[df_clean['PnL'] != 0]
         
         # 增加輔助欄位
@@ -111,29 +116,37 @@ def plot_cumulative_pnl_by_strategy(df):
     return fig
 
 def plot_strategy_quality_bubble(df):
-    """圖3: 策略品質矩陣 (氣泡圖)"""
+    """
+    圖3: 策略品質矩陣 (氣泡圖)
+    X軸: 勝率
+    Y軸: 盈虧比 (使用 R 計算: Avg Win R / Avg Loss R)
+    大小: 總損益絕對值
+    """
     stats = df.groupby('Strategy').apply(lambda x: pd.Series({
         'Win_Rate': (x['PnL'] > 0).mean(),
-        'Avg_Win': x[x['PnL'] > 0]['PnL'].mean() if not x[x['PnL'] > 0].empty else 0,
-        'Avg_Loss': abs(x[x['PnL'] < 0]['PnL'].mean()) if not x[x['PnL'] < 0].empty else 0,
+        # [UPDATED] 改用 R 值計算平均獲利/虧損幅度
+        'Avg_Win_R': x[x['R'] > 0]['R'].mean() if not x[x['R'] > 0].empty else 0,
+        'Avg_Loss_R': abs(x[x['R'] <= 0]['R'].mean()) if not x[x['R'] <= 0].empty else 0,
         'Total_PnL': x['PnL'].sum(),
         'Count': len(x)
     })).reset_index()
 
-    # Payoff Ratio = Avg Win / Avg Loss
-    stats['Payoff_Ratio'] = stats.apply(lambda row: row['Avg_Win'] / row['Avg_Loss'] if row['Avg_Loss'] > 0 else 0, axis=1)
+    # Payoff Ratio = Avg Win R / Avg Loss R
+    stats['Payoff_Ratio_R'] = stats.apply(lambda row: row['Avg_Win_R'] / row['Avg_Loss_R'] if row['Avg_Loss_R'] > 0 else 0, axis=1)
+    
+    # 氣泡大小維持用金額 (Total PnL)，因為這代表對帳戶的實際影響力
     stats['Bubble_Size'] = stats['Total_PnL'].abs()
     
     fig = px.scatter(
         stats,
         x="Win_Rate",
-        y="Payoff_Ratio",
+        y="Payoff_Ratio_R",
         size="Bubble_Size",
         color="Total_PnL",
         hover_name="Strategy",
-        hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True},
+        hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True, "Avg_Win_R": ":.2f", "Avg_Loss_R": ":.2f"},
         color_continuous_scale=["#26a69a", "#eeeeee", "#ef5350"],
-        title="策略品質矩陣 (氣泡大小 = 總損益規模)"
+        title="策略品質矩陣 (以 R 值計算盈虧比)"
     )
     
     fig.add_hline(y=1, line_dash="dash", line_color="gray", annotation_text="盈虧比 1:1")
@@ -141,14 +154,14 @@ def plot_strategy_quality_bubble(df):
 
     fig.update_layout(
         xaxis_title="勝率 (Win Rate)",
-        yaxis_title="盈虧比 (Payoff Ratio)",
+        yaxis_title="盈虧比 (Payoff Ratio in R)",
         xaxis_tickformat='.0%',
         height=400
     )
     return fig
 
 def plot_weekday_analysis(df):
-    """[RESTORED] 圖4 & 5: 週一~週五 總損益與勝率 (還原為長條圖)"""
+    """圖4 & 5: 週一~週五 總損益與勝率 (Bar)"""
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     
@@ -157,7 +170,7 @@ def plot_weekday_analysis(df):
         Win_Rate=('PnL', lambda x: (x > 0).mean())
     ).reset_index()
     
-    # 圖1: 總損益 (Bar)
+    # 圖1: 損益 (Bar)
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
     fig1.add_trace(go.Bar(
@@ -218,7 +231,7 @@ def plot_symbol_ranking(df):
 
 @st.fragment
 def draw_strategy_section(df):
-    """策略分析區塊 (包含新舊圖表)"""
+    """策略分析區塊"""
     st.subheader("1️⃣ 策略效能深度檢閱")
     
     all_strategies = sorted(df['Strategy'].unique().tolist())
@@ -235,14 +248,14 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 上排：基本表現 (高度 350)
+    # 上排：基本表現
     st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
     st.write("") 
     st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
     
-    # 下排：品質矩陣 (高度 400)
+    # 下排：品質矩陣 (更新為 R 計算)
     st.plotly_chart(plot_strategy_quality_bubble(df_filtered), use_container_width=True)
-    st.caption("💡 **如何解讀氣泡圖？** X軸越右邊勝率越高，Y軸越上面品質(盈虧比)越好。右上角是大賺區，右下角是薄利多銷區。氣泡越大代表總損益越多。")
+    st.caption("💡 **如何解讀？** Y軸為盈虧比 (Payoff Ratio)，此處使用 **R (風險倍數)** 計算，能排除部位大小影響，真實反映策略獲利能力。")
 
 # ==========================================
 # 3. 主入口
@@ -263,16 +276,15 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 (Fragment) ---
+    # --- Section 1: 策略分析 ---
     draw_strategy_section(df)
 
     st.markdown("---")
 
-    # --- Section 2: 週期分析 (還原為長條圖) ---
+    # --- Section 2: 週期分析 ---
     st.subheader("2️⃣ 交易週期效應 (Day of Week)")
     st.caption("檢查是否有「黑色星期X」魔咒，或是特定的獲利日。")
     
-    # 使用還原後的長條圖函式
     fig_day_pnl, fig_day_win = plot_weekday_analysis(df)
     
     dc1, dc2 = st.columns(2)
