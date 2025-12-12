@@ -36,8 +36,11 @@ def get_advanced_data(xls):
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         df_clean['PnL'] = pd.to_numeric(df_clean['PnL'].astype(str).str.replace(',', ''), errors='coerce')
         
-        # 去除空值 (日期或損益為空代表無效)
+        # 1. 去除空值 (日期或損益為空代表無效)
         df_clean = df_clean.dropna(subset=['Date', 'PnL'])
+        
+        # 2. [NEW] 排除損益為 0 的交易 (避免平盤單拉低勝率)
+        df_clean = df_clean[df_clean['PnL'] != 0]
         
         # 增加輔助欄位：星期幾 (Monday=0, Sunday=6)
         df_clean['Weekday'] = df_clean['Date'].dt.day_name()
@@ -124,7 +127,7 @@ def plot_weekday_analysis(df):
     
     weekday_stats = df.groupby('Weekday', observed=True).agg(
         Total_PnL=('PnL', 'sum'),
-        Win_Rate=('PnL', lambda x: (x > 0).mean())
+        Win_Rate=('PnL', lambda x: (x > 0).mean()) # 這裡的分母已經排除了0，所以只算有輸贏的場次
     ).reset_index()
     
     fig1 = go.Figure()
@@ -188,7 +191,6 @@ def plot_symbol_ranking(df):
 def draw_strategy_section(df):
     """
     使用 st.fragment 裝飾器，讓此區塊可以局部刷新
-    勾選策略後，不會導致整頁重整
     """
     st.subheader("1️⃣ 策略效能檢閱")
     
@@ -210,7 +212,7 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 4. 繪圖 (使用過濾後的 df_filtered)
+    # 4. 繪圖
     st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
     st.write("") 
     st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
@@ -231,13 +233,12 @@ def display_advanced_analysis(xls):
         return
         
     if df.empty:
-        st.info("目前沒有足夠的交易資料可供分析。")
+        st.info("目前沒有足夠的交易資料可供分析 (需排除損益為0的紀錄)。")
         return
 
     st.markdown("---")
 
     # --- Section 1: 策略分析 (獨立 Fragment，支援局部刷新) ---
-    # 將原始資料傳入，過濾邏輯在內部處理
     draw_strategy_section(df)
 
     st.markdown("---")
