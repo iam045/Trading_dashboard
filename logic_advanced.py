@@ -41,7 +41,6 @@ def get_advanced_data(xls):
 # ==========================================
 
 def plot_strategy_performance(df):
-    """策略總損益 Bar"""
     stats = df.groupby('Strategy').agg(
         Total_PnL=('PnL', 'sum'),
         Count=('PnL', 'count'),
@@ -73,7 +72,7 @@ def plot_strategy_performance(df):
     ))
 
     fig.update_layout(
-        title="各策略總損益與勝率",
+        title="策略總損益與勝率",
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
@@ -84,7 +83,6 @@ def plot_strategy_performance(df):
     return fig
 
 def plot_cumulative_pnl_by_strategy(df):
-    """策略權益曲線 Line"""
     df_sorted = df.sort_values('Date')
     df_sorted['CumPnL'] = df_sorted.groupby('Strategy')['PnL'].cumsum()
     
@@ -105,7 +103,6 @@ def plot_cumulative_pnl_by_strategy(df):
     return fig
 
 def plot_strategy_quality_bubble(df):
-    """策略品質矩陣 Bubble"""
     stats = df.groupby('Strategy').apply(lambda x: pd.Series({
         'Win_Rate': (x['PnL'] > 0).mean(),
         'Avg_Win_R': x[x['R'] > 0]['R'].mean() if not x[x['R'] > 0].empty else 0,
@@ -124,7 +121,7 @@ def plot_strategy_quality_bubble(df):
         size="Bubble_Size",
         color="Total_PnL",
         hover_name="Strategy",
-        hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True},
+        hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True, "Avg_Win_R": ":.2f", "Avg_Loss_R": ":.2f"},
         color_continuous_scale=["#26a69a", "#eeeeee", "#ef5350"],
         title="策略品質矩陣 (R)"
     )
@@ -145,7 +142,6 @@ def plot_strategy_quality_bubble(df):
 # --- 整體分佈分析圖表 ---
 
 def plot_pnl_distribution(df):
-    """整體損益分佈直方圖"""
     fig = go.Figure()
     
     wins = df[df['PnL'] > 0]['PnL']
@@ -178,7 +174,6 @@ def plot_pnl_distribution(df):
     return fig
 
 def plot_win_loss_box(df):
-    """整體賺賠規模箱型圖"""
     fig = go.Figure()
     
     # 獲利箱
@@ -202,7 +197,7 @@ def plot_win_loss_box(df):
     ))
 
     fig.update_layout(
-        title="賺賠金額分佈範圍 (Box Plot)",
+        title="賺賠規模對比 (Box Plot)",
         yaxis_title="損益金額 ($)",
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -211,7 +206,6 @@ def plot_win_loss_box(df):
     return fig
 
 def plot_weekday_analysis(df):
-    """週一~週五 Bar Chart"""
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     weekday_stats = df.groupby('Weekday', observed=True).agg(Total_PnL=('PnL', 'sum'), Win_Rate=('PnL', lambda x: (x > 0).mean())).reset_index()
@@ -227,7 +221,6 @@ def plot_weekday_analysis(df):
     return fig1, fig2
 
 def plot_symbol_ranking(df):
-    """標的排名"""
     symbol_stats = df.groupby('Symbol')['PnL'].sum().reset_index().sort_values('PnL', ascending=True)
     if len(symbol_stats) > 10: df_rank = pd.concat([symbol_stats.head(5), symbol_stats.tail(5)])
     else: df_rank = symbol_stats
@@ -243,7 +236,6 @@ def plot_symbol_ranking(df):
 
 @st.fragment
 def draw_strategy_section(df):
-    """策略分析區塊 (局部刷新)"""
     st.subheader("1️⃣ 策略效能深度檢閱")
     
     all_strategies = sorted(df['Strategy'].unique().tolist())
@@ -291,19 +283,16 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- [NEW] Section 2: 整體損益分佈結構 ---
+    # --- Section 2: 整體損益分佈結構 ---
     st.subheader("2️⃣ 整體損益分佈結構")
     
-    # 計算中位數 (Median) - 這就是您的常態獲利/虧損
     wins = df[df['PnL'] > 0]['PnL']
     losses = df[df['PnL'] < 0]['PnL']
     
     median_win = wins.median() if not wins.empty else 0
     median_loss = losses.median() if not losses.empty else 0
-    # 常態盈虧比 (Median Win / Median Loss)
     median_ratio = abs(median_win / median_loss) if median_loss != 0 else 0
     
-    # 顯示三個關鍵指標
     m1, m2, m3 = st.columns(3)
     m1.metric("常態獲利 (中位數)", f"${median_win:,.0f}", help="代表您 50% 的獲利單都大於此金額，這是您最典型的獲利水準。")
     m2.metric("常態虧損 (中位數)", f"${median_loss:,.0f}", help="代表您 50% 的虧損單都小於此金額，這是您最典型的虧損水準。")
@@ -316,8 +305,21 @@ def display_advanced_analysis(xls):
         st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
         st.caption("👈 **直方圖**：看最高的柱子在哪，那就是您最常出現的損益金額。")
     with d2: 
-        st.plotly_chart(plot_win_loss_box(df), use_container_width=True)
-        st.caption("👈 **箱型圖**：箱子中間的線就是上方的「中位數」。")
+        # [NEW] 在這裡增加小標題與詳細說明 Tooltip
+        help_text = """
+        **📦 如何閱讀箱型圖 (Box Plot)？**
+        
+        1. **中位數 (中間線)**：這條線的位置代表您的「常態」水準。
+        2. **箱子高度 (Box)**：代表中間 50% 的交易分佈。箱子越扁越穩定，越長代表波動越大。
+        3. **獨立圓點 (Outliers)**：箱子外的點是「極端值」。
+           - 如果綠色箱子下方有很遠的點，代表發生過「意外大賠」。
+        """
+        st.markdown(f"#### 賺賠規模對比 (Box Plot)", help=help_text)
+        # 移除 Plotly 內的標題，避免重複，讓版面更乾淨
+        fig_box = plot_win_loss_box(df)
+        fig_box.update_layout(title=None, margin=dict(t=10, b=20, l=40, r=40))
+        
+        st.plotly_chart(fig_box, use_container_width=True)
 
     st.markdown("---")
 
