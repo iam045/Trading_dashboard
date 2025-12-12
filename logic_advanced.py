@@ -41,7 +41,7 @@ def get_advanced_data(xls):
 # ==========================================
 
 def plot_strategy_performance(df):
-    """圖1: 總損益 Bar Chart"""
+    """策略總損益 Bar"""
     stats = df.groupby('Strategy').agg(
         Total_PnL=('PnL', 'sum'),
         Count=('PnL', 'count'),
@@ -73,7 +73,7 @@ def plot_strategy_performance(df):
     ))
 
     fig.update_layout(
-        title="策略總損益與勝率",
+        title="各策略總損益與勝率",
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
@@ -84,7 +84,7 @@ def plot_strategy_performance(df):
     return fig
 
 def plot_cumulative_pnl_by_strategy(df):
-    """圖2: 權益曲線 Line Chart"""
+    """策略權益曲線 Line"""
     df_sorted = df.sort_values('Date')
     df_sorted['CumPnL'] = df_sorted.groupby('Strategy')['PnL'].cumsum()
     
@@ -105,7 +105,7 @@ def plot_cumulative_pnl_by_strategy(df):
     return fig
 
 def plot_strategy_quality_bubble(df):
-    """圖3: 策略品質矩陣 (氣泡圖)"""
+    """策略品質矩陣 Bubble"""
     stats = df.groupby('Strategy').apply(lambda x: pd.Series({
         'Win_Rate': (x['PnL'] > 0).mean(),
         'Avg_Win_R': x[x['R'] > 0]['R'].mean() if not x[x['R'] > 0].empty else 0,
@@ -142,37 +142,37 @@ def plot_strategy_quality_bubble(df):
     )
     return fig
 
-# --- [NEW] 新增的損益分佈圖表 ---
+# --- [NEW] 整體分佈分析圖表 ---
 
 def plot_pnl_distribution(df):
-    """圖4: 損益分佈直方圖 (Histogram)"""
+    """整體損益分佈直方圖"""
     fig = go.Figure()
     
-    # 獲利部分 (紅色)
+    # 獲利部分
     wins = df[df['PnL'] > 0]['PnL']
     fig.add_trace(go.Histogram(
         x=wins,
-        name='獲利交易',
+        name='獲利',
         marker_color='#ef5350',
         opacity=0.75,
-        nbinsx=30 # 自動切分30個區間
+        nbinsx=40 
     ))
     
-    # 虧損部分 (綠色)
+    # 虧損部分
     losses = df[df['PnL'] < 0]['PnL']
     fig.add_trace(go.Histogram(
         x=losses,
-        name='虧損交易',
+        name='虧損',
         marker_color='#26a69a',
         opacity=0.75,
-        nbinsx=30
+        nbinsx=40
     ))
 
     fig.update_layout(
-        title="損益金額分佈 (直方圖)",
+        title="整體損益金額分佈 (Histogram)",
         xaxis_title="損益金額 ($)",
-        yaxis_title="交易筆數",
-        barmode='overlay', # 獲利與虧損圖層重疊顯示
+        yaxis_title="交易次數",
+        barmode='overlay', 
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -180,13 +180,7 @@ def plot_pnl_distribution(df):
     return fig
 
 def plot_win_loss_box(df):
-    """圖5: 賺賠規模對比 (Box Plot)"""
-    # 將資料標記為 Win 或 Loss
-    df['Type'] = df['PnL'].apply(lambda x: 'Win' if x > 0 else 'Loss')
-    
-    # 我們想比較虧損的"絕對值"與獲利的規模，這樣比較直觀 (看箱子大小)
-    # 或者保留負數，看分佈位置。這裡保留負數比較標準。
-    
+    """整體賺賠規模箱型圖"""
     fig = go.Figure()
     
     # 獲利箱
@@ -194,7 +188,7 @@ def plot_win_loss_box(df):
         y=df[df['PnL'] > 0]['PnL'],
         name='獲利規模',
         marker_color='#ef5350',
-        boxpoints='all', # 顯示散點
+        boxpoints='all', 
         jitter=0.3,
         pointpos=-1.8
     ))
@@ -210,7 +204,7 @@ def plot_win_loss_box(df):
     ))
 
     fig.update_layout(
-        title="賺賠規模對比 (箱型圖)",
+        title="整體賺賠規模對比 (Box Plot)",
         yaxis_title="損益金額 ($)",
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -218,8 +212,8 @@ def plot_win_loss_box(df):
     )
     return fig
 
-# ... (下方還有其他既有圖表函式 plot_weekday_analysis, plot_symbol_ranking 維持不變) ...
 def plot_weekday_analysis(df):
+    """週一~週五 Bar Chart"""
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     weekday_stats = df.groupby('Weekday', observed=True).agg(Total_PnL=('PnL', 'sum'), Win_Rate=('PnL', lambda x: (x > 0).mean())).reset_index()
@@ -235,6 +229,7 @@ def plot_weekday_analysis(df):
     return fig1, fig2
 
 def plot_symbol_ranking(df):
+    """標的排名"""
     symbol_stats = df.groupby('Symbol')['PnL'].sum().reset_index().sort_values('PnL', ascending=True)
     if len(symbol_stats) > 10: df_rank = pd.concat([symbol_stats.head(5), symbol_stats.tail(5)])
     else: df_rank = symbol_stats
@@ -250,12 +245,12 @@ def plot_symbol_ranking(df):
 
 @st.fragment
 def draw_strategy_section(df):
-    """策略分析區塊 (包含五張圖表)"""
+    """策略分析區塊 (局部刷新)"""
     st.subheader("1️⃣ 策略效能深度檢閱")
     
     all_strategies = sorted(df['Strategy'].unique().tolist())
     selected_strategies = st.multiselect(
-        "🎯 篩選策略 (可多選):",
+        "🎯 篩選策略 (僅影響本區塊圖表):",
         options=all_strategies,
         default=all_strategies,
         placeholder="請選擇至少一個策略..."
@@ -267,25 +262,13 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 第一排：基本表現 (3張圖)
+    # 三圖並排
     c1, c2, c3 = st.columns(3)
     with c1: st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
     with c2: st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
     with c3:
         st.plotly_chart(plot_strategy_quality_bubble(df_filtered), use_container_width=True)
         st.markdown("<p style='font-size: 12px; color: #666; text-align: center; margin-top: -10px;'>💡 氣泡大小 = 總損益規模</p>", unsafe_allow_html=True)
-
-    st.write("")
-    
-    # 第二排：[NEW] 損益分佈分析 (2張圖)
-    st.markdown("#### 📊 損益分佈結構分析")
-    d1, d2 = st.columns(2)
-    with d1: 
-        st.plotly_chart(plot_pnl_distribution(df_filtered), use_container_width=True)
-        st.caption("👈 **直方圖**：看賺錢和賠錢的金額主要集中在哪裡 (最高的柱子)。")
-    with d2: 
-        st.plotly_chart(plot_win_loss_box(df_filtered), use_container_width=True)
-        st.caption("👈 **箱型圖**：比較「平均賺」和「平均賠」的規模 (箱子位置)，以及是否有極端大賠 (下方散點)。")
 
 # ==========================================
 # 3. 主入口
@@ -306,13 +289,25 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 (Fragment, 含分佈圖) ---
+    # --- Section 1: 策略分析 (Fragment) ---
     draw_strategy_section(df)
 
     st.markdown("---")
 
-    # --- Section 2: 週期分析 ---
-    st.subheader("2️⃣ 交易週期效應 (Day of Week)")
+    # --- [NEW] Section 2: 整體損益分佈結構 (使用原始 df，不受策略篩選影響) ---
+    st.subheader("2️⃣ 整體損益分佈結構")
+    st.caption("分析帳戶所有交易的賺賠區間分佈與規模對比 (不受上方策略篩選影響)。")
+    
+    d1, d2 = st.columns(2)
+    with d1: 
+        st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
+    with d2: 
+        st.plotly_chart(plot_win_loss_box(df), use_container_width=True)
+
+    st.markdown("---")
+
+    # --- Section 3: 週期分析 ---
+    st.subheader("3️⃣ 交易週期效應 (Day of Week)")
     fig_day_pnl, fig_day_win = plot_weekday_analysis(df)
     
     dc1, dc2 = st.columns(2)
@@ -321,6 +316,6 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 3: 標的分析 ---
-    st.subheader("3️⃣ 標的 (Symbol) 損益風雲榜")
+    # --- Section 4: 標的分析 ---
+    st.subheader("4️⃣ 標的 (Symbol) 損益風雲榜")
     st.plotly_chart(plot_symbol_ranking(df), use_container_width=True)
