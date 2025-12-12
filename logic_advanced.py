@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from utils import load_google_sheet # 假設 utils 有這個，若無可直接用 app.py 傳進來的 xls
+from utils import load_google_sheet 
 
 # ==========================================
 # 0. 資料處理核心
@@ -92,7 +92,7 @@ def plot_strategy_performance(df):
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
-        height=350, # [Modified] 調整高度為 350，與下方圖表一致
+        height=350, 
         margin=dict(t=40, b=40)
     )
     return fig
@@ -111,7 +111,7 @@ def plot_cumulative_pnl_by_strategy(df):
         markers=False
     )
     fig.update_layout(
-        height=350, # [Modified] 調整高度為 350，與下方圖表一致
+        height=350,
         hovermode="x unified",
         margin=dict(t=40, b=40)
     )
@@ -119,7 +119,6 @@ def plot_cumulative_pnl_by_strategy(df):
 
 def plot_weekday_analysis(df):
     """功能 2: 週一~週五 哪天容易贏 (Heatmap Style Bar)"""
-    # 按照週一到週五排序
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     
@@ -128,7 +127,6 @@ def plot_weekday_analysis(df):
         Win_Rate=('PnL', lambda x: (x > 0).mean())
     ).reset_index()
     
-    # 圖1: 損益
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
     fig1.add_trace(go.Bar(
@@ -137,9 +135,8 @@ def plot_weekday_analysis(df):
         marker_color=colors1,
         text=weekday_stats['Total_PnL'].apply(lambda x: f"${x:,.0f}")
     ))
-    fig1.update_layout(title="週一至週五：總損益表現", height=350) # 維持 350 為基準
+    fig1.update_layout(title="週一至週五：總損益表現", height=350)
     
-    # 圖2: 勝率
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
         x=weekday_stats['Weekday'], 
@@ -147,17 +144,15 @@ def plot_weekday_analysis(df):
         marker_color='#5c6bc0',
         text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}")
     ))
-    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%') # 維持 350 為基準
+    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%')
     
     return fig1, fig2
 
 def plot_symbol_ranking(df):
     """功能 3: 標的賺賠排名 (Horizontal Bar)"""
-    # 統計標的損益
     symbol_stats = df.groupby('Symbol')['PnL'].sum().reset_index()
-    symbol_stats = symbol_stats.sort_values('PnL', ascending=True) # 從虧最多排到賺最多
+    symbol_stats = symbol_stats.sort_values('PnL', ascending=True)
     
-    # 取頭尾各 5 名 (如果標的太少就全取)
     if len(symbol_stats) > 10:
         top_5_losers = symbol_stats.head(5)
         top_5_winners = symbol_stats.tail(5)
@@ -165,7 +160,6 @@ def plot_symbol_ranking(df):
     else:
         df_rank = symbol_stats
 
-    # 配色
     colors = ['#ef5350' if x >= 0 else '#26a69a' for x in df_rank['PnL']]
     
     fig = go.Figure()
@@ -181,24 +175,59 @@ def plot_symbol_ranking(df):
     fig.update_layout(
         title="標的損益排行榜 (Top 5 賺錢 vs 賠錢)",
         xaxis_title="總損益 ($)",
-        height=350, # [Modified] 統一調整高度為 350
+        height=350,
         margin=dict(l=100, t=40, b=40) 
     )
     return fig
 
 # ==========================================
-# 2. 主入口
+# 2. 局部刷新元件 (Fragment)
+# ==========================================
+
+@st.fragment
+def draw_strategy_section(df):
+    """
+    使用 st.fragment 裝飾器，讓此區塊可以局部刷新
+    勾選策略後，不會導致整頁重整
+    """
+    st.subheader("1️⃣ 策略效能檢閱")
+    
+    # 1. 自動抓取所有策略名稱
+    all_strategies = sorted(df['Strategy'].unique().tolist())
+    
+    # 2. 建立多選選單 (預設全選)
+    selected_strategies = st.multiselect(
+        "🎯 篩選策略 (可多選):",
+        options=all_strategies,
+        default=all_strategies,
+        placeholder="請選擇至少一個策略..."
+    )
+    
+    # 3. 過濾資料
+    if not selected_strategies:
+        st.warning("⚠️ 請至少勾選一個策略以顯示數據")
+        return
+
+    df_filtered = df[df['Strategy'].isin(selected_strategies)]
+    
+    # 4. 繪圖 (使用過濾後的 df_filtered)
+    st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
+    st.write("") 
+    st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
+
+
+# ==========================================
+# 3. 主入口
 # ==========================================
 
 def display_advanced_analysis(xls):
     st.markdown("### 🔍 交易細項深度分析")
     st.caption("挖掘數據背後的行為模式：策略穩定性、時間週期效應、以及選股能力。")
     
-    # 1. 載入資料
+    # 1. 載入資料 (全頁共用)
     df, err = get_advanced_data(xls)
     if err:
         st.warning(f"⚠️ 無法進行分析: {err}")
-        st.info("💡 請確認 '期望值' 分頁中，是否包含 '日期', '策略', '標的', '損益' 等欄位。")
         return
         
     if df.empty:
@@ -207,16 +236,9 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 (上下排列) ---
-    st.subheader("1️⃣ 策略效能檢閱")
-    
-    # 第一張：各策略總損益 Bar Chart
-    st.plotly_chart(plot_strategy_performance(df), use_container_width=True)
-    
-    st.write("") # 增加一點間距
-    
-    # 第二張：策略權益曲線 Line Chart
-    st.plotly_chart(plot_cumulative_pnl_by_strategy(df), use_container_width=True)
+    # --- Section 1: 策略分析 (獨立 Fragment，支援局部刷新) ---
+    # 將原始資料傳入，過濾邏輯在內部處理
+    draw_strategy_section(df)
 
     st.markdown("---")
 
