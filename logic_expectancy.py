@@ -5,7 +5,7 @@ import calendar
 import plotly.graph_objects as go
 
 # ==========================================
-# 0. UI 風格與 CSS 注入器 (含每週結算樣式)
+# 0. UI 風格與 CSS 注入器
 # ==========================================
 
 def inject_custom_css():
@@ -347,7 +347,10 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
     st.markdown("---")
     
-    # 1. 月份選擇器 (靠左)
+    # [NEW] 1. 建立上方容器 (Placeholder)，用來之後回填 4 張卡片
+    top_stats_container = st.container()
+
+    # 2. 月份選擇器 (靠左)
     c_header_left, _ = st.columns([1, 4])
     with c_header_left:
         st.markdown('<div class="cal-selector">', unsafe_allow_html=True)
@@ -356,24 +359,38 @@ def draw_calendar_fragment(df_cal, theme_mode):
     
     y, m = sel_period.year, sel_period.month
     
-    # 2. 先計算該月數據 (為了給上方圖表使用)
+    # 3. 計算該月數據
     mask_month = (df_cal['Date'].dt.year == y) & (df_cal['Date'].dt.month == m)
-    df_month = df_cal[mask_month].sort_values('Date') # 確保日期排序正確
+    df_month = df_cal[mask_month].sort_values('Date') 
 
-    # --- [MOVED UP] 3. 月度走勢圖 (移動到最上方) ---
+    # [MOVED] 4. 將 4 張卡片 渲染進剛剛建立的 top_stats_container (顯示在選擇器上方)
+    with top_stats_container:
+        m_pnl = df_month['DayPnL'].sum()
+        total_days = len(df_month)
+        win_days = df_month[df_month['DayPnL'] > 0]
+        loss_days = df_month[df_month['DayPnL'] < 0]
+        m_win_rate = (len(win_days) / total_days) if total_days > 0 else 0
+        day_max_win = win_days['DayPnL'].max() if not win_days.empty else 0
+        day_max_loss = loss_days['DayPnL'].min() if not loss_days.empty else 0
+
+        m1, m2, m3, m4 = st.columns(4)
+        with m1: st.metric("本月淨損益", f"${m_pnl:,.0f}")
+        with m2: st.metric("本月日勝率", f"{m_win_rate*100:.1f}%")
+        with m3: st.metric("日最大獲利", f"${day_max_win:,.0f}")
+        with m4: st.metric("日最大虧損", f"${day_max_loss:,.0f}")
+        
+        st.write("") # 增加間距
+
+    # 5. 月度走勢圖 (維持在選擇器下方)
     if not df_month.empty:
-        # 台股配色: 漲(>0)紅, 跌(<0)綠
         color_up = '#ef5350' # Soft Red
         color_down = '#26a69a' # Teal Green
         
-        # 準備數據
         df_month['CumPnL'] = df_month['DayPnL'].cumsum()
         
-        # 繪製圖表
         col_chart1, col_chart2 = st.columns(2)
         
-        # Chart 1: 月度日損益累積走勢 (Area Chart)
-        m_pnl = df_month['DayPnL'].sum()
+        # Chart 1: Area Chart
         trend_color = color_up if m_pnl >= 0 else color_down
         fill_color_rgba = hex_to_rgba(trend_color, 0.2)
         
@@ -386,7 +403,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
             fillcolor=fill_color_rgba,
             name='累積損益'
         ))
-        # 中文化標題: 本月累積損益走勢
         fig1.update_layout(
             title=dict(text="本月累積損益走勢", font=dict(size=14), x=0),
             height=280,
@@ -399,7 +415,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
         )
         with col_chart1: st.plotly_chart(fig1, use_container_width=True)
         
-        # Chart 2: 月度日損益柱狀圖 (Bar Chart)
+        # Chart 2: Bar Chart
         bar_colors = [color_up if v >= 0 else color_down for v in df_month['DayPnL']]
         
         fig2 = go.Figure()
@@ -408,7 +424,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
             marker_color=bar_colors,
             name='日損益'
         ))
-        # 中文化標題: 本月每日損益
         fig2.update_layout(
             title=dict(text="本月每日損益", font=dict(size=14), x=0),
             height=280,
@@ -422,25 +437,8 @@ def draw_calendar_fragment(df_cal, theme_mode):
         with col_chart2: st.plotly_chart(fig2, use_container_width=True)
 
     st.write("") 
-
-    # 4. 月度統計小卡片 (KPI)
-    m_pnl = df_month['DayPnL'].sum()
-    total_days = len(df_month)
-    win_days = df_month[df_month['DayPnL'] > 0]
-    loss_days = df_month[df_month['DayPnL'] < 0]
-    m_win_rate = (len(win_days) / total_days) if total_days > 0 else 0
-    day_max_win = win_days['DayPnL'].max() if not win_days.empty else 0
-    day_max_loss = loss_days['DayPnL'].min() if not loss_days.empty else 0
-
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("本月淨損益", f"${m_pnl:,.0f}")
-    with m2: st.metric("本月日勝率", f"{m_win_rate*100:.1f}%")
-    with m3: st.metric("日最大獲利", f"${day_max_win:,.0f}")
-    with m4: st.metric("日最大虧損", f"${day_max_loss:,.0f}")
-
-    st.write("") 
     
-    # 5. 標題與日曆表格
+    # 6. 標題與日曆表格
     st.markdown(f"<h3 style='text-align: left !important; margin-bottom: 15px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
 
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
@@ -453,7 +451,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
     for week in month_days:
         html += "<tr>"
         
-        # --- 計算該週統計數據 ---
         week_pnl = 0
         active_days = 0
         for day in week:
@@ -464,7 +461,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
                 week_pnl += pnl
                 active_days += 1
         
-        # --- 生成左側 7 天的格子 ---
         for day in week:
             if day == 0:
                 html += "<td class='cal-td' style='background: transparent; border: none; box-shadow: none;'></td>"
@@ -485,7 +481,6 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
             html += f"<td class='{td_class}'><div class='day-num'>{day}</div>{pnl_html}</td>"
         
-        # --- 生成右側「每週結算」卡片 (第 8 欄) ---
         w_pnl_class = "text-green" if week_pnl >= 0 else "text-red"
         w_pnl_sign = "+" if week_pnl > 0 else ("-" if week_pnl < 0 else "")
         w_pnl_str = f"${abs(week_pnl):,.0f}" if active_days > 0 else "$0"
