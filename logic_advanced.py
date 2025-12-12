@@ -142,13 +142,12 @@ def plot_strategy_quality_bubble(df):
     )
     return fig
 
-# --- [NEW] 整體分佈分析圖表 ---
+# --- 整體分佈分析圖表 ---
 
 def plot_pnl_distribution(df):
     """整體損益分佈直方圖"""
     fig = go.Figure()
     
-    # 獲利部分
     wins = df[df['PnL'] > 0]['PnL']
     fig.add_trace(go.Histogram(
         x=wins,
@@ -158,7 +157,6 @@ def plot_pnl_distribution(df):
         nbinsx=40 
     ))
     
-    # 虧損部分
     losses = df[df['PnL'] < 0]['PnL']
     fig.add_trace(go.Histogram(
         x=losses,
@@ -169,9 +167,9 @@ def plot_pnl_distribution(df):
     ))
 
     fig.update_layout(
-        title="整體損益金額分佈 (Histogram)",
+        title="損益金額頻率分佈 (Histogram)",
         xaxis_title="損益金額 ($)",
-        yaxis_title="交易次數",
+        yaxis_title="出現次數 (頻率)",
         barmode='overlay', 
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -204,7 +202,7 @@ def plot_win_loss_box(df):
     ))
 
     fig.update_layout(
-        title="整體賺賠規模對比 (Box Plot)",
+        title="賺賠金額分佈範圍 (Box Plot)",
         yaxis_title="損益金額 ($)",
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -262,7 +260,6 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 三圖並排
     c1, c2, c3 = st.columns(3)
     with c1: st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
     with c2: st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
@@ -294,15 +291,33 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- [NEW] Section 2: 整體損益分佈結構 (使用原始 df，不受策略篩選影響) ---
+    # --- [NEW] Section 2: 整體損益分佈結構 ---
     st.subheader("2️⃣ 整體損益分佈結構")
-    st.caption("分析帳戶所有交易的賺賠區間分佈與規模對比 (不受上方策略篩選影響)。")
     
+    # 計算中位數 (Median) - 這就是您的常態獲利/虧損
+    wins = df[df['PnL'] > 0]['PnL']
+    losses = df[df['PnL'] < 0]['PnL']
+    
+    median_win = wins.median() if not wins.empty else 0
+    median_loss = losses.median() if not losses.empty else 0
+    # 常態盈虧比 (Median Win / Median Loss)
+    median_ratio = abs(median_win / median_loss) if median_loss != 0 else 0
+    
+    # 顯示三個關鍵指標
+    m1, m2, m3 = st.columns(3)
+    m1.metric("常態獲利 (中位數)", f"${median_win:,.0f}", help="代表您 50% 的獲利單都大於此金額，這是您最典型的獲利水準。")
+    m2.metric("常態虧損 (中位數)", f"${median_loss:,.0f}", help="代表您 50% 的虧損單都小於此金額，這是您最典型的虧損水準。")
+    m3.metric("常態盈虧比", f"{median_ratio:.2f}", help="常態獲利 / 常態虧損。如果 > 1.5 代表結構很棒。")
+    
+    st.write("")
+
     d1, d2 = st.columns(2)
     with d1: 
         st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
+        st.caption("👈 **直方圖**：看最高的柱子在哪，那就是您最常出現的損益金額。")
     with d2: 
         st.plotly_chart(plot_win_loss_box(df), use_container_width=True)
+        st.caption("👈 **箱型圖**：箱子中間的線就是上方的「中位數」。")
 
     st.markdown("---")
 
