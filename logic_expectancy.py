@@ -356,9 +356,9 @@ def draw_calendar_fragment(df_cal, theme_mode):
     
     y, m = sel_period.year, sel_period.month
     
-    # 2. 計算該月統記數據 (補回的部分)
+    # 2. 計算該月數據
     mask_month = (df_cal['Date'].dt.year == y) & (df_cal['Date'].dt.month == m)
-    df_month = df_cal[mask_month]
+    df_month = df_cal[mask_month].sort_values('Date') # 確保日期排序正確
 
     m_pnl = df_month['DayPnL'].sum()
     total_days = len(df_month)
@@ -377,13 +377,74 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
     st.write("") 
     
-    # 4. 標題與日曆表格
+    # --- [NEW] 4. 新增月度走勢圖 (紅色框框區域) ---
+    if not df_month.empty:
+        # 台股配色: 漲(>0)紅, 跌(<0)綠
+        color_up = '#ef5350' # Soft Red
+        color_down = '#26a69a' # Teal Green
+        
+        # 準備數據
+        df_month['CumPnL'] = df_month['DayPnL'].cumsum()
+        
+        # 繪製圖表
+        col_chart1, col_chart2 = st.columns(2)
+        
+        # Chart 1: 月度日損益累積走勢 (Area Chart)
+        # 邏輯：如果整月最終是賺的，用紅色系；賠的用綠色系 (模擬趨勢感)
+        trend_color = color_up if m_pnl >= 0 else color_down
+        fill_color_rgba = hex_to_rgba(trend_color, 0.2)
+        
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(
+            x=df_month['Date'], y=df_month['CumPnL'],
+            mode='lines',
+            line=dict(color=trend_color, width=3),
+            fill='tozeroy',
+            fillcolor=fill_color_rgba,
+            name='累積損益'
+        ))
+        fig1.update_layout(
+            title=dict(text="Daily Net Cumulative P&L", font=dict(size=14), x=0),
+            height=280,
+            margin=dict(l=10, r=10, t=40, b=10),
+            xaxis=dict(showgrid=False, showticklabels=True, tickformat='%m/%d'),
+            yaxis=dict(showgrid=True, gridcolor='#eee', zeroline=True, zerolinecolor='#ccc'),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            showlegend=False
+        )
+        with col_chart1: st.plotly_chart(fig1, use_container_width=True)
+        
+        # Chart 2: 月度日損益柱狀圖 (Bar Chart)
+        # 邏輯：單日賺紅，單日賠綠
+        bar_colors = [color_up if v >= 0 else color_down for v in df_month['DayPnL']]
+        
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=df_month['Date'], y=df_month['DayPnL'],
+            marker_color=bar_colors,
+            name='日損益'
+        ))
+        fig2.update_layout(
+            title=dict(text="Net Daily P&L", font=dict(size=14), x=0),
+            height=280,
+            margin=dict(l=10, r=10, t=40, b=10),
+            xaxis=dict(showgrid=False, showticklabels=True, tickformat='%m/%d'),
+            yaxis=dict(showgrid=True, gridcolor='#eee', zeroline=True, zerolinecolor='#ccc'),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            showlegend=False
+        )
+        with col_chart2: st.plotly_chart(fig2, use_container_width=True)
+
+    st.write("") 
+
+    # 5. 標題與日曆表格
     st.markdown(f"<h3 style='text-align: left !important; margin-bottom: 15px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
 
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal_obj.monthdayscalendar(y, m)
     
-    # HTML 建構 (維持無縮排)
     html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
 
     week_count = 1
@@ -467,5 +528,5 @@ def display_expectancy_lab(xls):
     # 2. 凱利公式
     draw_kelly_fragment(kpi)
     
-    # 3. 日曆 (含週結算 + 月統計)
+    # 3. 日曆 (含週結算 + 月統計 + 月走勢圖)
     draw_calendar_fragment(df_cal, chart_theme)
