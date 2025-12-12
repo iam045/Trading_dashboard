@@ -59,10 +59,11 @@ def inject_custom_css():
         div[data-baseweb="select"] { text-align: left !important; }
         .cal-selector div[data-baseweb="select"] { text-align: left; }
 
-        /* --- 新版日曆樣式 (8欄佈局) --- */
+        /* --- 新版日曆樣式 (9欄佈局: 7天 + 1週 + 1月) --- */
         .cal-container { width: 100%; overflow-x: auto; }
         .cal-table { 
             width: 100%; 
+            min-width: 1200px; /* 確保在小螢幕上不會擠成一團 */
             border-collapse: separate; 
             border-spacing: 6px; 
             margin: 0 auto; 
@@ -90,19 +91,21 @@ def inject_custom_css():
         .day-pnl { margin-top: 22px; font-size: 15px; font-weight: 700; text-align: center; }
         .day-info { font-size: 11px; color: inherit; opacity: 0.8; text-align: center; margin-top: 2px; }
 
-        /* --- 右側：每週結算欄位樣式 --- */
-        .week-summary-td {
-            width: 160px; /* 固定右側欄寬度 */
+        /* --- 右側欄位共用樣式 --- */
+        .summary-td {
+            width: 150px; /* 固定右側欄寬度 */
             vertical-align: middle;
             background-color: transparent !important;
             border: none !important;
             box-shadow: none !important;
-            padding-left: 15px !important;
+            padding-left: 10px !important;
         }
+        
+        /* 週結算卡片 */
         .week-card {
             background-color: #fff;
             border-radius: 12px;
-            padding: 15px 10px;
+            padding: 10px;
             text-align: center;
             border: 1px solid #e0e0e0;
             box-shadow: 0 2px 8px rgba(0,0,0,0.03);
@@ -115,6 +118,23 @@ def inject_custom_css():
         .week-pnl { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
         .week-days { font-size: 11px; color: #999; }
 
+        /* 月統計卡片 (新) */
+        .month-card {
+            background-color: #fff; /* 或用微不同的顏色區分 #fbfbfb */
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+            border: 1px solid #eeeeee;
+            border-left: 3px solid #81C7D4; /* 左側藍線區分 */
+            box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+            height: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .month-title { font-size: 11px; color: #666; margin-bottom: 4px; }
+        .month-val { font-size: 16px; font-weight: 700; color: #333; }
+        
         /* 顏色定義 */
         .text-green { color: #00897b; }
         .text-red { color: #e53935; }
@@ -347,10 +367,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
     st.markdown("---")
     
-    # [NEW] 1. 建立上方容器 (Placeholder)，用來之後回填 4 張卡片
-    top_stats_container = st.container()
-
-    # 2. 月份選擇器 (靠左)
+    # 1. 月份選擇器 (靠左)
     c_header_left, _ = st.columns([1, 4])
     with c_header_left:
         st.markdown('<div class="cal-selector">', unsafe_allow_html=True)
@@ -359,29 +376,19 @@ def draw_calendar_fragment(df_cal, theme_mode):
     
     y, m = sel_period.year, sel_period.month
     
-    # 3. 計算該月數據
+    # 2. 計算該月數據
     mask_month = (df_cal['Date'].dt.year == y) & (df_cal['Date'].dt.month == m)
     df_month = df_cal[mask_month].sort_values('Date') 
 
-    # [MOVED] 4. 將 4 張卡片 渲染進剛剛建立的 top_stats_container (顯示在選擇器上方)
-    with top_stats_container:
-        m_pnl = df_month['DayPnL'].sum()
-        total_days = len(df_month)
-        win_days = df_month[df_month['DayPnL'] > 0]
-        loss_days = df_month[df_month['DayPnL'] < 0]
-        m_win_rate = (len(win_days) / total_days) if total_days > 0 else 0
-        day_max_win = win_days['DayPnL'].max() if not win_days.empty else 0
-        day_max_loss = loss_days['DayPnL'].min() if not loss_days.empty else 0
+    m_pnl = df_month['DayPnL'].sum()
+    total_days = len(df_month)
+    win_days = df_month[df_month['DayPnL'] > 0]
+    loss_days = df_month[df_month['DayPnL'] < 0]
+    m_win_rate = (len(win_days) / total_days) if total_days > 0 else 0
+    day_max_win = win_days['DayPnL'].max() if not win_days.empty else 0
+    day_max_loss = loss_days['DayPnL'].min() if not loss_days.empty else 0
 
-        m1, m2, m3, m4 = st.columns(4)
-        with m1: st.metric("本月淨損益", f"${m_pnl:,.0f}")
-        with m2: st.metric("本月日勝率", f"{m_win_rate*100:.1f}%")
-        with m3: st.metric("日最大獲利", f"${day_max_win:,.0f}")
-        with m4: st.metric("日最大虧損", f"${day_max_loss:,.0f}")
-        
-        st.write("") # 增加間距
-
-    # 5. 月度走勢圖 (維持在選擇器下方)
+    # 3. 月度走勢圖 (維持在選擇器下方)
     if not df_month.empty:
         color_up = '#ef5350' # Soft Red
         color_down = '#26a69a' # Teal Green
@@ -438,19 +445,29 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
     st.write("") 
     
-    # 6. 標題與日曆表格
+    # 4. 標題與日曆表格
     st.markdown(f"<h3 style='text-align: left !important; margin-bottom: 15px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
 
     cal_obj = calendar.Calendar(firstweekday=6) # Sunday start
     month_days = cal_obj.monthdayscalendar(y, m)
+
+    # 準備月統計卡片數據，依序為：淨損益、勝率、最大獲利、最大虧損
+    month_stats_data = [
+        {"title": "本月淨損益", "val": f"${m_pnl:,.0f}", "color": "text-green" if m_pnl >=0 else "text-red"},
+        {"title": "本月日勝率", "val": f"{m_win_rate*100:.1f}%", "color": ""},
+        {"title": "日最大獲利", "val": f"${day_max_win:,.0f}", "color": "text-green"},
+        {"title": "日最大虧損", "val": f"${day_max_loss:,.0f}", "color": "text-red"}
+    ]
     
-    html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
+    # HTML 建構：表頭增加一欄 (共9欄)
+    html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
 
     week_count = 1
     
-    for week in month_days:
+    for idx, week in enumerate(month_days):
         html += "<tr>"
         
+        # --- 計算該週統計數據 ---
         week_pnl = 0
         active_days = 0
         for day in week:
@@ -461,6 +478,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
                 week_pnl += pnl
                 active_days += 1
         
+        # --- 生成左側 7 天的格子 ---
         for day in week:
             if day == 0:
                 html += "<td class='cal-td' style='background: transparent; border: none; box-shadow: none;'></td>"
@@ -481,18 +499,34 @@ def draw_calendar_fragment(df_cal, theme_mode):
 
             html += f"<td class='{td_class}'><div class='day-num'>{day}</div>{pnl_html}</td>"
         
+        # --- 第 8 欄：週結算卡片 ---
         w_pnl_class = "text-green" if week_pnl >= 0 else "text-red"
         w_pnl_sign = "+" if week_pnl > 0 else ("-" if week_pnl < 0 else "")
         w_pnl_str = f"${abs(week_pnl):,.0f}" if active_days > 0 else "$0"
         
-        show_card = any(d != 0 for d in week)
+        show_week_card = any(d != 0 for d in week)
         
-        if show_card:
+        if show_week_card:
             card_html = f"<div class='week-card'><div class='week-title'>Week {week_count}</div><div class='week-pnl {w_pnl_class}'>{w_pnl_sign}{w_pnl_str}</div><div class='week-days'>{active_days} active days</div></div>"
-            html += f"<td class='week-summary-td'>{card_html}</td>"
+            html += f"<td class='summary-td'>{card_html}</td>"
             week_count += 1
         else:
-            html += "<td class='week-summary-td'></td>"
+            html += "<td class='summary-td'></td>"
+
+        # --- [NEW] 第 9 欄：月統計卡片 (垂直堆疊，每列一張) ---
+        # 只要行數不超過我們準備的數據數量 (4張)，就填入一張
+        if idx < len(month_stats_data):
+            m_stat = month_stats_data[idx]
+            color_cls = m_stat["color"]
+            m_card_html = f"""
+            <div class='month-card'>
+                <div class='month-title'>{m_stat['title']}</div>
+                <div class='month-val {color_cls}'>{m_stat['val']}</div>
+            </div>
+            """
+            html += f"<td class='summary-td'>{m_card_html}</td>"
+        else:
+            html += "<td class='summary-td'></td>"
 
         html += "</tr>"
 
