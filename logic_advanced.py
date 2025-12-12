@@ -18,10 +18,7 @@ def get_advanced_data(xls):
     try:
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # -----------------------------------------------------------
-        # ⚠️ 欄位更新: 新增讀取第 N 欄 (Index 13) 作為 R 值
-        # 0=Date, 1=Strategy, 2=Symbol, 10=Risk, 11=PnL, 13=R
-        # -----------------------------------------------------------
+        # ⚠️ 欄位對應: 0=Date, 1=Strategy, 2=Symbol, 10=Risk, 11=PnL, 13=R
         needed_cols = [0, 1, 2, 10, 11, 13] 
         
         if df.shape[1] < max(needed_cols): 
@@ -30,7 +27,6 @@ def get_advanced_data(xls):
         df_clean = df.iloc[:, needed_cols].copy()
         df_clean.columns = ['Date', 'Strategy', 'Symbol', 'Risk_Amount', 'PnL', 'R']
 
-        # 資料清理
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         df_clean['PnL'] = pd.to_numeric(df_clean['PnL'].astype(str).str.replace(',', ''), errors='coerce')
         df_clean['R'] = pd.to_numeric(df_clean['R'].astype(str).str.replace(',', ''), errors='coerce')
@@ -38,7 +34,7 @@ def get_advanced_data(xls):
         # 1. 去除無效資料
         df_clean = df_clean.dropna(subset=['Date', 'PnL'])
         
-        # 2. 排除損益為 0 的交易 (避免平盤單拉低勝率)
+        # 2. 排除損益為 0 的交易
         df_clean = df_clean[df_clean['PnL'] != 0]
         
         # 增加輔助欄位
@@ -86,12 +82,13 @@ def plot_strategy_performance(df):
     ))
 
     fig.update_layout(
-        title="各策略總損益與勝率排名",
+        title="策略總損益與勝率",
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=350, 
-        margin=dict(t=40, b=40)
+        margin=dict(t=40, b=20, l=40, r=40)
     )
     return fig
 
@@ -105,36 +102,28 @@ def plot_cumulative_pnl_by_strategy(df):
         x='Date', 
         y='CumPnL', 
         color='Strategy',
-        title="各策略權益曲線 (穩定性檢測)",
+        title="策略權益曲線",
         markers=False
     )
     fig.update_layout(
         height=350,
         hovermode="x unified",
-        margin=dict(t=40, b=40)
+        margin=dict(t=40, b=20, l=20, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     return fig
 
 def plot_strategy_quality_bubble(df):
-    """
-    圖3: 策略品質矩陣 (氣泡圖)
-    X軸: 勝率
-    Y軸: 盈虧比 (使用 R 計算: Avg Win R / Avg Loss R)
-    大小: 總損益絕對值
-    """
+    """圖3: 策略品質矩陣 (氣泡圖)"""
     stats = df.groupby('Strategy').apply(lambda x: pd.Series({
         'Win_Rate': (x['PnL'] > 0).mean(),
-        # [UPDATED] 改用 R 值計算平均獲利/虧損幅度
         'Avg_Win_R': x[x['R'] > 0]['R'].mean() if not x[x['R'] > 0].empty else 0,
         'Avg_Loss_R': abs(x[x['R'] <= 0]['R'].mean()) if not x[x['R'] <= 0].empty else 0,
         'Total_PnL': x['PnL'].sum(),
         'Count': len(x)
     })).reset_index()
 
-    # Payoff Ratio = Avg Win R / Avg Loss R
     stats['Payoff_Ratio_R'] = stats.apply(lambda row: row['Avg_Win_R'] / row['Avg_Loss_R'] if row['Avg_Loss_R'] > 0 else 0, axis=1)
-    
-    # 氣泡大小維持用金額 (Total PnL)，因為這代表對帳戶的實際影響力
     stats['Bubble_Size'] = stats['Total_PnL'].abs()
     
     fig = px.scatter(
@@ -146,17 +135,19 @@ def plot_strategy_quality_bubble(df):
         hover_name="Strategy",
         hover_data={"Bubble_Size": False, "Total_PnL": ":,.0f", "Count": True, "Avg_Win_R": ":.2f", "Avg_Loss_R": ":.2f"},
         color_continuous_scale=["#26a69a", "#eeeeee", "#ef5350"],
-        title="策略品質矩陣 (以 R 值計算盈虧比)"
+        title="策略品質矩陣 (R)"
     )
     
-    fig.add_hline(y=1, line_dash="dash", line_color="gray", annotation_text="盈虧比 1:1")
-    fig.add_vline(x=0.5, line_dash="dash", line_color="gray", annotation_text="勝率 50%")
+    fig.add_hline(y=1, line_dash="dash", line_color="gray")
+    fig.add_vline(x=0.5, line_dash="dash", line_color="gray")
 
     fig.update_layout(
-        xaxis_title="勝率 (Win Rate)",
-        yaxis_title="盈虧比 (Payoff Ratio in R)",
+        xaxis_title="勝率",
+        yaxis_title="盈虧比 (R)",
         xaxis_tickformat='.0%',
-        height=400
+        height=350,
+        margin=dict(t=40, b=20, l=20, r=20),
+        coloraxis_showscale=False # 隱藏顏色條以節省空間
     )
     return fig
 
@@ -170,7 +161,7 @@ def plot_weekday_analysis(df):
         Win_Rate=('PnL', lambda x: (x > 0).mean())
     ).reset_index()
     
-    # 圖1: 損益 (Bar)
+    # 圖1: 損益
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
     fig1.add_trace(go.Bar(
@@ -181,7 +172,7 @@ def plot_weekday_analysis(df):
     ))
     fig1.update_layout(title="週一至週五：總損益表現", height=350)
     
-    # 圖2: 勝率 (Bar)
+    # 圖2: 勝率
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
         x=weekday_stats['Weekday'], 
@@ -231,7 +222,7 @@ def plot_symbol_ranking(df):
 
 @st.fragment
 def draw_strategy_section(df):
-    """策略分析區塊"""
+    """策略分析區塊 (包含三張並排圖表)"""
     st.subheader("1️⃣ 策略效能深度檢閱")
     
     all_strategies = sorted(df['Strategy'].unique().tolist())
@@ -248,14 +239,17 @@ def draw_strategy_section(df):
 
     df_filtered = df[df['Strategy'].isin(selected_strategies)]
     
-    # 上排：基本表現
-    st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
-    st.write("") 
-    st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
+    # [MODIFIED] 使用三欄位佈局，將圖表合併在同一行
+    c1, c2, c3 = st.columns(3)
     
-    # 下排：品質矩陣 (更新為 R 計算)
-    st.plotly_chart(plot_strategy_quality_bubble(df_filtered), use_container_width=True)
-    st.caption("💡 **如何解讀？** Y軸為盈虧比 (Payoff Ratio)，此處使用 **R (風險倍數)** 計算，能排除部位大小影響，真實反映策略獲利能力。")
+    with c1: 
+        st.plotly_chart(plot_strategy_performance(df_filtered), use_container_width=True)
+    with c2: 
+        st.plotly_chart(plot_cumulative_pnl_by_strategy(df_filtered), use_container_width=True)
+    with c3:
+        st.plotly_chart(plot_strategy_quality_bubble(df_filtered), use_container_width=True)
+        # 把說明文字稍微縮小並置中，比較好看
+        st.markdown("<p style='font-size: 12px; color: #666; text-align: center; margin-top: -10px;'>💡 氣泡大小 = 總損益規模</p>", unsafe_allow_html=True)
 
 # ==========================================
 # 3. 主入口
@@ -276,7 +270,7 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 ---
+    # --- Section 1: 策略分析 (Fragment) ---
     draw_strategy_section(df)
 
     st.markdown("---")
