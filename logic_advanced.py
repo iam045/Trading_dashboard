@@ -21,12 +21,9 @@ def get_advanced_data(xls):
         
         # -----------------------------------------------------------
         # ⚠️ 請根據您的 Excel 實際欄位位置調整這裡的數字 (Index)
-        # 目前假設: 0=Date, 1=Strategy, 2=Symbol(標的), 11=PnL
-        # 如果您的標的在其他欄位，請修改下方的 iloc index
+        # 目前假設: 0=Date, 1=Strategy, 2=Symbol(標的), 10=Risk, 11=PnL
         # -----------------------------------------------------------
         
-        # 嘗試自動重新命名常見欄位，若欄位數夠多
-        # 這裡我們先採取比較寬鬆的讀取方式，保留多一點欄位
         needed_cols = [0, 1, 2, 10, 11] # Date, Strategy, Symbol, Risk, PnL
         
         if df.shape[1] < max(needed_cols): 
@@ -95,7 +92,8 @@ def plot_strategy_performance(df):
         yaxis=dict(title="總損益 ($)"),
         yaxis2=dict(title="勝率 (%)", overlaying='y', side='right', tickformat='.0%'),
         showlegend=True,
-        height=400
+        height=500, # 加高一點讓單張圖更好看
+        margin=dict(t=50, b=50)
     )
     return fig
 
@@ -112,7 +110,11 @@ def plot_cumulative_pnl_by_strategy(df):
         title="各策略權益曲線 (誰是穩定獲利王？)",
         markers=False
     )
-    fig.update_layout(height=400, hovermode="x unified")
+    fig.update_layout(
+        height=500, # 加高一點
+        hovermode="x unified",
+        margin=dict(t=50, b=50)
+    )
     return fig
 
 def plot_weekday_analysis(df):
@@ -208,17 +210,16 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
 
-    # --- Section 1: 策略分析 ---
+    # --- Section 1: 策略分析 (改為上下排列) ---
     st.subheader("1️⃣ 策略效能檢閱")
-    c1, c2 = st.columns([1, 1])
     
-    with c1:
-        # 圖表：各策略總損益 Bar Chart
-        st.plotly_chart(plot_strategy_performance(df), use_container_width=True)
+    # 第一張：各策略總損益 Bar Chart
+    st.plotly_chart(plot_strategy_performance(df), use_container_width=True)
     
-    with c2:
-        # 圖表：策略權益曲線 Line Chart (我建議的新增功能)
-        st.plotly_chart(plot_cumulative_pnl_by_strategy(df), use_container_width=True)
+    st.write("") # 增加一點間距
+    
+    # 第二張：策略權益曲線 Line Chart
+    st.plotly_chart(plot_cumulative_pnl_by_strategy(df), use_container_width=True)
 
     st.markdown("---")
 
