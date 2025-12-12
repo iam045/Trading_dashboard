@@ -197,7 +197,7 @@ def plot_win_loss_box(df):
     ))
 
     fig.update_layout(
-        title="賺賠規模對比 (Box Plot)",
+        title="賺賠規模對比 (Box Plot)", # 移除問號說明
         yaxis_title="損益金額 ($)",
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -305,21 +305,8 @@ def display_advanced_analysis(xls):
         st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
         st.caption("👈 **直方圖**：看最高的柱子在哪，那就是您最常出現的損益金額。")
     with d2: 
-        # [NEW] 在這裡增加小標題與詳細說明 Tooltip
-        help_text = """
-        **📦 如何閱讀箱型圖 (Box Plot)？**
-        
-        1. **中位數 (中間線)**：這條線的位置代表您的「常態」水準。
-        2. **箱子高度 (Box)**：代表中間 50% 的交易分佈。箱子越扁越穩定，越長代表波動越大。
-        3. **獨立圓點 (Outliers)**：箱子外的點是「極端值」。
-           - 如果綠色箱子下方有很遠的點，代表發生過「意外大賠」。
-        """
-        st.markdown(f"#### 賺賠規模對比 (Box Plot)", help=help_text)
-        # 移除 Plotly 內的標題，避免重複，讓版面更乾淨
-        fig_box = plot_win_loss_box(df)
-        fig_box.update_layout(title=None, margin=dict(t=10, b=20, l=40, r=40))
-        
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(plot_win_loss_box(df), use_container_width=True)
+        st.caption("👈 **箱型圖**：箱子中間的線就是上方的「中位數」。")
 
     st.markdown("---")
 
