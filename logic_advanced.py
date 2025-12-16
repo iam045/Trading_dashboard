@@ -197,7 +197,7 @@ def plot_win_loss_box(df):
     ))
 
     fig.update_layout(
-        title="賺賠規模對比 (Box Plot)", # 移除問號說明
+        title="賺賠規模對比 (Box Plot)", 
         yaxis_title="損益金額 ($)",
         height=350,
         margin=dict(t=40, b=20, l=40, r=40),
@@ -208,7 +208,16 @@ def plot_win_loss_box(df):
 def plot_weekday_analysis(df):
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
-    weekday_stats = df.groupby('Weekday', observed=True).agg(Total_PnL=('PnL', 'sum'), Win_Rate=('PnL', lambda x: (x > 0).mean())).reset_index()
+    
+    # [UPDATED] 這裡修改為「以日為單位」計算勝率
+    # 1. 先將數據聚合為「每日損益」
+    daily_df = df.groupby(['Date', 'Weekday'], observed=True)['PnL'].sum().reset_index()
+    
+    # 2. 再針對每日損益進行統計
+    weekday_stats = daily_df.groupby('Weekday', observed=True).agg(
+        Total_PnL=('PnL', 'sum'),                     # 總損益不變 (所有單加總 = 所有日加總)
+        Win_Rate=('PnL', lambda x: (x > 0).mean())    # 勝率變為 (獲利日數 / 總日數)
+    ).reset_index()
     
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
@@ -217,7 +226,7 @@ def plot_weekday_analysis(df):
     
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=weekday_stats['Weekday'], y=weekday_stats['Win_Rate'], marker_color='#5c6bc0', text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}")))
-    fig2.update_layout(title="週一至週五：勝率表現", height=350, yaxis_tickformat='.0%')
+    fig2.update_layout(title="週一至週五：勝率表現 (以日計算)", height=350, yaxis_tickformat='.0%')
     return fig1, fig2
 
 def plot_symbol_ranking(df):
