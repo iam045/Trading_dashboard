@@ -209,24 +209,47 @@ def plot_weekday_analysis(df):
     cats = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     df['Weekday'] = pd.Categorical(df['Weekday'], categories=cats, ordered=True)
     
-    # [UPDATED] 這裡修改為「以日為單位」計算勝率
-    # 1. 先將數據聚合為「每日損益」
+    # 1. 先聚合為「每日損益」
     daily_df = df.groupby(['Date', 'Weekday'], observed=True)['PnL'].sum().reset_index()
     
-    # 2. 再針對每日損益進行統計
+    # 2. 針對每日損益進行統計 (加入 Day_Count 與 Win_Day_Count)
     weekday_stats = daily_df.groupby('Weekday', observed=True).agg(
-        Total_PnL=('PnL', 'sum'),                     # 總損益不變 (所有單加總 = 所有日加總)
-        Win_Rate=('PnL', lambda x: (x > 0).mean())    # 勝率變為 (獲利日數 / 總日數)
+        Total_PnL=('PnL', 'sum'),
+        Win_Rate=('PnL', lambda x: (x > 0).mean()),
+        Day_Count=('PnL', 'count'),                     # [NEW] 總交易天數
+        Win_Day_Count=('PnL', lambda x: (x > 0).sum())  # [NEW] 獲利天數
     ).reset_index()
     
+    # 圖1: 損益
     fig1 = go.Figure()
     colors1 = ['#ef5350' if x >= 0 else '#26a69a' for x in weekday_stats['Total_PnL']]
-    fig1.add_trace(go.Bar(x=weekday_stats['Weekday'], y=weekday_stats['Total_PnL'], marker_color=colors1, text=weekday_stats['Total_PnL'].apply(lambda x: f"${x:,.0f}")))
+    fig1.add_trace(go.Bar(
+        x=weekday_stats['Weekday'], 
+        y=weekday_stats['Total_PnL'], 
+        marker_color=colors1, 
+        text=weekday_stats['Total_PnL'].apply(lambda x: f"${x:,.0f}"),
+        # [NEW] Hover 顯示樣本數
+        customdata=weekday_stats['Day_Count'],
+        hovertemplate='%{x}<br>總損益: $%{y:,.0f}<br>樣本數: %{customdata} 天<extra></extra>'
+    ))
     fig1.update_layout(title="週一至週五：總損益表現", height=350)
     
+    # 圖2: 勝率 (以日計算)
     fig2 = go.Figure()
-    fig2.add_trace(go.Bar(x=weekday_stats['Weekday'], y=weekday_stats['Win_Rate'], marker_color='#5c6bc0', text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}")))
+    # 準備 customdata: [獲利天數, 總天數]
+    custom_data_win = weekday_stats[['Win_Day_Count', 'Day_Count']].values
+    
+    fig2.add_trace(go.Bar(
+        x=weekday_stats['Weekday'], 
+        y=weekday_stats['Win_Rate'], 
+        marker_color='#5c6bc0', 
+        text=weekday_stats['Win_Rate'].apply(lambda x: f"{x:.1%}"),
+        # [NEW] Hover 顯示詳細獲利天數
+        customdata=custom_data_win,
+        hovertemplate='%{x}<br>日勝率: %{y:.1%}<br>獲利天數: %{customdata[0]} / %{customdata[1]} 天<extra></extra>'
+    ))
     fig2.update_layout(title="週一至週五：勝率表現 (以日計算)", height=350, yaxis_tickformat='.0%')
+    
     return fig1, fig2
 
 def plot_symbol_ranking(df):
