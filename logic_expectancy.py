@@ -18,15 +18,15 @@ def inject_custom_css():
         
         h1, h2, h3, p { text-align: center !important; }
 
-        /* --- Metric 卡片容器 --- */
+        /* --- Metric 卡片容器 (增強版) --- */
         div[data-testid="column"]:has(div[data-testid="stMetric"]) {
             background-color: #ffffff;
             border: 1px solid #e0e0e0;
             border-radius: 12px;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
             padding: 20px 15px 10px 15px;
-            min-height: 160px;
-            transition: transform 0.2s;
+            min-height: 180px; /* 稍微加高以容納 Sparkline */
+            transition: transform 0.2s, box-shadow 0.2s;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -34,24 +34,13 @@ def inject_custom_css():
         div[data-testid="column"]:has(div[data-testid="stMetric"]):hover {
             border-color: #81C7D4;
             transform: translateY(-3px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
         }
 
         /* --- Metric 數值文字 --- */
         div[data-testid="stMetric"] { background-color: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
         div[data-testid="stMetricLabel"] { font-size: 13px; color: #888; justify-content: center; width: 100%; }
-        div[data-testid="stMetricValue"] { font-size: 24px; font-weight: 600; color: #333; }
-
-        /* --- Popover 按鈕 --- */
-        div[data-testid="column"] div[data-testid="stPopover"] button {
-            border: none !important;
-            background: transparent !important;
-            color: #81C7D4 !important;
-            width: 100% !important;
-            margin-top: 10px !important;
-            border-top: 1px solid #f5f5f5 !important;
-            border-radius: 0px 0px 12px 12px !important;
-        }
+        div[data-testid="stMetricValue"] { font-size: 26px; font-weight: 700; color: #333; margin-bottom: 5px; }
 
         /* --- 全域元件微調 --- */
         .stTabs [data-baseweb="tab-list"] { justify-content: flex-start !important; gap: 20px; }
@@ -271,30 +260,45 @@ def hex_to_rgba(hex_color, opacity=0.1):
         return f"rgba({r}, {g}, {b}, {opacity})"
     return hex_color 
 
-def get_mini_chart(df_t, col_name, color, title, height=400):
-    """繪製 KPI 小卡背後的趨勢圖"""
-    fill_color = hex_to_rgba(color, 0.15)
+def get_sparkline(df_t, col_name, color):
+    """
+    [NEW] 產生 Sparkline (微型趨勢圖)
+    特點：極簡、無座標軸、高度低、適合嵌入卡片
+    """
+    fill_color = hex_to_rgba(color, 0.1)
+    
+    # 為了讓 Sparkline 更好看，我們可以讓它從頭開始 (避免只有一段)
+    # 取最近 50 筆數據來畫微型圖，反應近期走勢
+    df_show = df_t.tail(50) if len(df_t) > 50 else df_t
+    
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_t['Date'], y=df_t[col_name], 
-        mode='lines', name=col_name,
-        line=dict(color=color, width=2.5),
-        fill='tozeroy', fillcolor=fill_color 
+        x=df_show['Date'], y=df_show[col_name], 
+        mode='lines', 
+        name=col_name,
+        line=dict(color=color, width=2), # 線條稍微細一點
+        fill='tozeroy', 
+        fillcolor=fill_color,
+        hoverinfo='y' # 只顯示數值，保持乾淨
     ))
+    
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14), x=0.5, xanchor='center'),
-        height=height, 
-        margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=True),
-        yaxis=dict(showgrid=True, gridcolor='#eee'),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        showlegend=False
+        height=60, # 設定極低的高度
+        margin=dict(l=0, r=0, t=5, b=0), # 移除所有邊距
+        xaxis=dict(visible=False, fixedrange=True), # 隱藏 X 軸
+        yaxis=dict(visible=False, fixedrange=True), # 隱藏 Y 軸
+        paper_bgcolor='rgba(0,0,0,0)', 
+        plot_bgcolor='rgba(0,0,0,0)',
+        showlegend=False,
+        hovermode='x unified' # 簡單的互動
     )
+    
+    # 隱藏 Plotly 工具列 (config 在呼叫端設定)
     return fig
 
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
-    """繪製最上方的 KPI 卡片列"""
+    """繪製最上方的 KPI 卡片列 (使用 Sparklines)"""
     tips = {
         "Exp": "期望值 (Expectancy):\n每承擔 1R 風險，預期能賺回多少 R。\n公式: 總損益 ÷ 總風險金額",
         "PF": "獲利因子 (Profit Factor):\n總獲利金額是總虧損金額的幾倍。",
@@ -305,36 +309,41 @@ def draw_kpi_cards_with_charts(kpi, df_t):
 
     c1, c2, c3, c4, c5 = st.columns(5)
     
-    # 1. 總損益
+    # 1. 總損益 (無 Sparkline，維持大數字)
     with c1:
         st.metric("總損益", f"${kpi['Total PnL']:,.0f}")
+        # 這裡可以放總資金曲線，或者留白
         st.write("") 
     
-    # 2. 期望值
+    # 2. 期望值 + Sparkline
     with c2:
         st.metric("期望值", f"{kpi['Expectancy']:.2f} R", help=tips['Exp'])
-        with st.popover("📊 趨勢", use_container_width=True):
-            range_mode = st.radio("範圍", ["全歷史", "近 50 筆"], horizontal=True, key="range_exp")
-            df_show = df_t if range_mode == "全歷史" else df_t.tail(50)
-            st.plotly_chart(get_mini_chart(df_show, 'Expectancy', '#FF8A65', '期望值走勢'), use_container_width=True)
+        # 直接顯示微型圖 (config 設定 staticPlot 可完全禁止互動，這裡保留一點點 hover)
+        st.plotly_chart(
+            get_sparkline(df_t, 'Expectancy', '#FF8A65'), 
+            use_container_width=True, 
+            config={'displayModeBar': False}
+        )
             
-    # 3. 獲利因子
+    # 3. 獲利因子 + Sparkline
     with c3:
         st.metric("獲利因子", f"{kpi['Profit Factor']:.2f}", help=tips['PF'])
-        with st.popover("📊 趨勢", use_container_width=True):
-            range_mode = st.radio("範圍", ["全歷史", "近 50 筆"], horizontal=True, key="range_pf")
-            df_show = df_t if range_mode == "全歷史" else df_t.tail(50)
-            st.plotly_chart(get_mini_chart(df_show, 'Profit Factor', '#BA68C8', '獲利因子走勢'), use_container_width=True)
+        st.plotly_chart(
+            get_sparkline(df_t, 'Profit Factor', '#BA68C8'), 
+            use_container_width=True, 
+            config={'displayModeBar': False}
+        )
             
-    # 4. 盈虧比
+    # 4. 盈虧比 + Sparkline
     with c4:
         st.metric("盈虧比 (R)", f"{kpi['Payoff Ratio']:.2f}", help=tips['Payoff'])
-        with st.popover("📊 趨勢", use_container_width=True):
-            range_mode = st.radio("範圍", ["全歷史", "近 50 筆"], horizontal=True, key="range_payoff")
-            df_show = df_t if range_mode == "全歷史" else df_t.tail(50)
-            st.plotly_chart(get_mini_chart(df_show, 'Payoff Ratio', '#4DB6AC', '盈虧比走勢'), use_container_width=True)
+        st.plotly_chart(
+            get_sparkline(df_t, 'Payoff Ratio', '#4DB6AC'), 
+            use_container_width=True, 
+            config={'displayModeBar': False}
+        )
             
-    # 5. 勝率
+    # 5. 勝率 (無 Sparkline，或可加)
     with c5:
         st.metric("勝率", f"{kpi['Win Rate']*100:.1f}%", help=tips['Win'])
         st.write("") 
@@ -346,12 +355,15 @@ def draw_kpi_cards_with_charts(kpi, df_t):
     d1.metric("總交易次數", f"{kpi['Total Trades']} 筆")
     d2.metric("最大連勝", f"{kpi['Max Win Streak']} 次")
     d3.metric("最大連敗", f"{kpi['Max Loss Streak']} 次")
+    
+    # 穩定度 + Sparkline
     with d4:
         st.metric("穩定度 R²", f"{kpi['R Squared']:.2f}", help=tips['RSQ'])
-        with st.popover("📊 趨勢", use_container_width=True):
-             range_mode = st.radio("範圍", ["全歷史", "近 50 筆"], horizontal=True, key="range_rsq")
-             df_show = df_t if range_mode == "全歷史" else df_t.tail(50)
-             st.plotly_chart(get_mini_chart(df_show, 'R Squared', '#9575CD', '穩定度走勢'), use_container_width=True)
+        st.plotly_chart(
+            get_sparkline(df_t, 'R Squared', '#9575CD'), 
+            use_container_width=True, 
+            config={'displayModeBar': False}
+        )
     d5.empty()
 
 @st.fragment
