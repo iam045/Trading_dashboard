@@ -24,7 +24,7 @@ def get_advanced_data(xls):
             '標的': 'Symbol',
             '1R單位': 'Risk_Amount',
             '損益': 'PnL',
-            '標準R(盈虧比)': 'R'  # 更新為您提供的欄位名稱
+            '標準R(盈虧比)': 'R'  # 更新為您要求的欄位名稱
         }
         
         # 檢查必備欄位是否存在，若不存在則補空值或預設值
@@ -57,7 +57,7 @@ def get_advanced_data(xls):
         return None, f"讀取失敗: {e}"
 
 # ==========================================
-# 1. 繪圖函式組 (標的排行優化版)
+# 1. 繪圖函式組
 # ==========================================
 
 def plot_symbol_ranking(df):
@@ -95,7 +95,44 @@ def plot_symbol_ranking(df):
     )
     return fig
 
-# --- 其餘繪圖函式保持原有精美邏輯 ---
+def plot_pnl_distribution(df):
+    """損益金額頻率分佈圖 (標準化區間寬度)"""
+    fig = go.Figure()
+    
+    # 找出數據的絕對最大值，用來設定對稱的 X 軸與統一的分箱寬度
+    abs_max = df['PnL'].abs().max()
+    # 設定統一的分箱大小 (將最大範圍切成約 20 份)
+    bin_size = abs_max / 20 if abs_max > 0 else 100
+
+    wins = df[df['PnL'] > 0]['PnL']
+    fig.add_trace(go.Histogram(
+        x=wins,
+        name='獲利',
+        marker_color='#ef5350',
+        opacity=0.75,
+        xbins=dict(start=0, end=abs_max, size=bin_size)
+    ))
+    
+    losses = df[df['PnL'] < 0]['PnL']
+    fig.add_trace(go.Histogram(
+        x=losses,
+        name='虧損',
+        marker_color='#26a69a',
+        opacity=0.75,
+        xbins=dict(start=-abs_max, end=0, size=bin_size)
+    ))
+
+    fig.update_layout(
+        title="損益金額頻率分佈 (標準化區間)",
+        xaxis_title="損益金額 ($)",
+        yaxis_title="出現次數 (頻率)",
+        barmode='overlay', 
+        height=350,
+        xaxis=dict(range=[-abs_max * 1.1, abs_max * 1.1]), # 保持 X 軸對稱
+        margin=dict(t=40, b=20, l=40, r=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
 
 def plot_strategy_performance(df):
     stats = df.groupby('Strategy').agg(Total_PnL=('PnL', 'sum'), Count=('PnL', 'count'), Win_Count=('PnL', lambda x: (x > 0).sum())).reset_index()
@@ -129,13 +166,6 @@ def plot_strategy_quality_bubble(df):
     fig.add_hline(y=1, line_dash="dash", line_color="gray")
     fig.add_vline(x=0.5, line_dash="dash", line_color="gray")
     fig.update_layout(xaxis_title="勝率", yaxis_title="盈虧比 (R)", xaxis_tickformat='.0%', height=350, margin=dict(t=40, b=20, l=20, r=20), coloraxis_showscale=False)
-    return fig
-
-def plot_pnl_distribution(df):
-    fig = go.Figure()
-    fig.add_trace(go.Histogram(x=df[df['PnL'] > 0]['PnL'], name='獲利', marker_color='#ef5350', opacity=0.75))
-    fig.add_trace(go.Histogram(x=df[df['PnL'] < 0]['PnL'], name='虧損', marker_color='#26a69a', opacity=0.75))
-    fig.update_layout(title="損益金額頻率分佈", barmode='overlay', height=350, margin=dict(t=40, b=20, l=40, r=40))
     return fig
 
 def plot_win_loss_box(df):
