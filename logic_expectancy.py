@@ -175,6 +175,7 @@ def get_expectancy_data(xls):
     except Exception as e: return None, f"讀取期望值失敗: {e}"
 
 def get_daily_report_data(xls):
+    """讀取最新的兩個日報表"""
     sheet_names = xls.sheet_names
     daily_sheets = [s for s in sheet_names if "日報表" in s]
     if not daily_sheets: return None, "找不到 '日報表'", "無"
@@ -184,7 +185,8 @@ def get_daily_report_data(xls):
     for sheet in target_sheets:
         try:
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
-            df_cal = df.iloc[:, [0, 7]].copy()
+            if df.shape[1] < 8: continue 
+            df_cal = df.iloc[:, [0, 7]].copy() # 日期, 當日損益
             df_cal.columns = ['Date', 'DayPnL']
             df_cal['Date'] = pd.to_datetime(df_cal['Date'], errors='coerce').dt.normalize()
             df_cal = df_cal.dropna(subset=['Date'])
@@ -195,6 +197,7 @@ def get_daily_report_data(xls):
     return pd.concat(all_dfs, ignore_index=True).sort_values('Date'), None, ""
 
 def calculate_streaks(df):
+    """計算連勝與連敗"""
     pnl = df['PnL'].values
     max_win = max_loss = curr_win = curr_loss = 0
     for val in pnl:
@@ -203,11 +206,13 @@ def calculate_streaks(df):
     return max_win, max_loss
 
 def calculate_r_squared(df):
+    """計算權益曲線 R平方 (穩定度)"""
     if len(df) < 2: return 0
     y = df['R'].cumsum().values; x = np.arange(len(y))
     return (np.corrcoef(x, y)[0, 1]) ** 2
 
 def calculate_kpis(df):
+    """計算全域 KPI"""
     total = len(df); wins = df[df['PnL'] > 0]; losses = df[df['PnL'] <= 0]
     total_pnl = df['PnL'].sum(); win_rate = len(wins) / total if total > 0 else 0
     avg_win_r = df[df['R'] > 0]['R'].mean() if len(wins) > 0 else 0
@@ -228,6 +233,7 @@ def calculate_kpis(df):
     }
 
 def calculate_trends(df):
+    """計算累積數據供圖表使用 (修正順序問題)"""
     df = df.reset_index(drop=True).copy()
     df['Running_EV'] = df['R'].expanding().mean()
     df['Running_PF'] = (df['PnL'].apply(lambda x: x if x > 0 else 0).cumsum() / 
@@ -245,15 +251,17 @@ def hex_to_rgba(hex_color, opacity=0.1):
     return f"rgba({r}, {g}, {b}, {opacity})"
 
 def get_sparkline(df_t, col_name, color):
+    """產生微型趨勢圖"""
     fill_color = hex_to_rgba(color, 0.1)
     df_show = df_t.tail(50) if len(df_t) > 50 else df_t
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_show['Date'], y=df_show[col_name], mode='lines', line=dict(color=color, width=2), fill='tozeroy', fillcolor=fill_color))
-    fig.update_layout(height=60, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(visible=False), yaxis=dict(visible=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
+    fig.update_layout(height=60, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(visible=False, fixedrange=True), yaxis=dict(visible=False, fixedrange=True), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, hovermode='x unified')
     return fig
 
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
+    """繪製 KPI 卡片列"""
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: st.metric("總損益", f"${kpi['Total PnL']:,.0f}"); st.write("")
     with c2: 
@@ -282,7 +290,9 @@ def draw_kelly_fragment(kpi):
     st.markdown("<h4 style='text-align: center; color: #888; margin-top: 10px;'>Position Sizing (Kelly)</h4>", unsafe_allow_html=True)
     c_center = st.columns([1, 2, 2, 2, 2, 1]) 
     with c_center[1]: capital = st.number_input("目前本金", value=1000000, step=100000)
-    with c_center[2]: kelly_frac = st.selectbox("凱利倍數", [1/4, 1/5, 1/6, 1/8], index=1, format_func=lambda x: f"1/{int(1/x)} Kelly")
+    with c_center[2]: 
+        # [修改] 新增 1/7 選項
+        kelly_frac = st.selectbox("凱利倍數", [1/4, 1/5, 1/6, 1/7, 1/8], index=1, format_func=lambda x: f"1/{int(1/x)} Kelly")
     adj_kelly = max(0, kpi.get('Full Kelly', 0) * kelly_frac)
     with c_center[3]: st.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
     with c_center[4]: st.metric("建議單筆風險", f"${capital * adj_kelly:,.0f}")
@@ -302,46 +312,53 @@ def draw_calendar_fragment(df_cal, theme_mode):
     df_month = df_cal[(df_cal['Date'].dt.year == y) & (df_cal['Date'].dt.month == m)].sort_values('Date')
     m_pnl = df_month['DayPnL'].sum()
 
-    # 月統計資訊與繪圖 (保留原設計)
     if not df_month.empty:
         col_c1, col_c2 = st.columns(2)
         color = '#ef5350' if m_pnl >= 0 else '#26a69a'
         fig1 = go.Figure(go.Scatter(x=df_month['Date'], y=df_month['DayPnL'].cumsum(), mode='lines', line=dict(color=color, width=3), fill='tozeroy', fillcolor=hex_to_rgba(color, 0.2)))
-        fig1.update_layout(height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
+        fig1.update_layout(title=dict(text="本月累積損益走勢", font=dict(size=14), x=0), height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
         with col_c1: st.plotly_chart(fig1, use_container_width=True)
         
         fig2 = go.Figure(go.Bar(x=df_month['Date'], y=df_month['DayPnL'], marker_color=[('#ef5350' if v >= 0 else '#26a69a') for v in df_month['DayPnL']]))
-        fig2.update_layout(height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
-        with col_c2: st.plotly_chart(fig2, use_container_width=True)
+        fig2.update_layout(title=dict(text="本月每日損益", font=dict(size=14), x=0), height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
+        with col_chart2: st.plotly_chart(fig2, use_container_width=True)
 
-    # HTML 月曆生成 (9 欄佈局)
-    st.markdown(f"<h3 style='text-align: left !important;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='text-align: left !important; margin-bottom: 15px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
     cal_obj = calendar.Calendar(firstweekday=6)
     month_days = cal_obj.monthdayscalendar(y, m)
     
-    # ... 此處繼續 9 欄 HTML 生成邏輯 (由於長度限制，邏輯已簡化，完全對齊您提供的 HTML 格式)
-    # [註: 由於此處需要大量 HTML 字串生成，我確保其結構完全符合您提供的 Sun-Sat + 2個 Summary 欄位]
-    html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th'></th><th class='cal-th'></th></tr></thead><tbody>"""
+    html = """<div class="cal-container"><table class='cal-table'><thead><tr><th class='cal-th'>Sun</th><th class='cal-th'>Mon</th><th class='cal-th'>Tue</th><th class='cal-th'>Wed</th><th class='cal-th'>Thu</th><th class='cal-th'>Fri</th><th class='cal-th'>Sat</th><th class='cal-th' style='width: 150px;'></th><th class='cal-th' style='width: 150px;'></th></tr></thead><tbody>"""
     week_count = 1
     m_stats = [{"title": "本月損益", "val": f"${m_pnl:,.0f}"}, {"title": "日勝率", "val": f"{(len(df_month[df_month['DayPnL']>0])/len(df_month[df_month['DayPnL']!=0]) if len(df_month[df_month['DayPnL']!=0])>0 else 0)*100:.1f}%"}, {"title": "最大獲利", "val": f"${df_month['DayPnL'].max():,.0f}"}, {"title": "最大虧損", "val": f"${df_month['DayPnL'].min():,.0f}"}]
 
     for idx, week in enumerate(month_days):
         html += "<tr>"
-        week_pnl = 0
-        active_days = 0
+        week_pnl, active_days_in_week = 0, 0
         for day in week:
-            if day == 0: html += "<td class='cal-td' style='background:transparent; border:none;'></td>"
+            if day == 0: continue
+            pnl = daily_pnl_map.get(f"{y}-{m:02d}-{day:02d}", 0)
+            if pnl != 0: week_pnl += pnl; active_days_in_week += 1
+        
+        for day in week:
+            if day == 0: html += "<td class='cal-td' style='background:transparent; border:none; box-shadow: none;'></td>"
             else:
                 pnl = daily_pnl_map.get(f"{y}-{m:02d}-{day:02d}", 0)
-                cls = "cal-td" + (" bg-green" if pnl > 0 else (" bg-red" if pnl < 0 else ""))
-                pnl_str = f"<div class='day-pnl'>{'+' if pnl>0 else '-'}${abs(pnl):,.0f}</div><div class='day-info'>Trade</div>" if pnl != 0 else ""
-                html += f"<td class='{cls}'><div class='day-num'>{day}</div>{pnl_str}</td>"
-                if pnl != 0: week_pnl += pnl; active_days += 1
+                td_cls = "cal-td" + (" bg-green" if pnl > 0 else (" bg-red" if pnl < 0 else ""))
+                pnl_str = f"<div class='day-pnl'>{'+' if pnl>0 else '-'}${abs(pnl):,.0f}</div><div class='day-info'>Trade</div>" if pnl != 0 else "<div style='height: 20px;'></div>"
+                html += f"<td class='{td_cls}'><div class='day-num'>{day}</div>{pnl_str}</td>"
         
-        # 右側 Summary 欄位 (第 8, 9 欄)
-        w_cls = "text-green" if week_pnl >= 0 else "text-red"
-        html += f"<td class='summary-td'><div class='week-card'><div class='week-title'>Week {week_count}</div><div class='week-pnl {w_cls}'>${abs(week_pnl):,.0f}</div><div class='week-days'>{active_days} days</div></div></td>"
-        week_count += 1
+        # [修改] 週結算 Summary 欄位顏色邏輯：正數為紅字，負數為綠字並帶負號
+        show_week_card = any(d != 0 for d in week)
+        if show_week_card:
+            # 修改點：正損益紅字(text-red)，負損益綠字(text-green)
+            w_cls = "text-red" if week_pnl >= 0 else "text-green"
+            # 修改點：加入符號顯示邏輯
+            w_sign = "+" if week_pnl > 0 else "-" if week_pnl < 0 else ""
+            w_pnl_str = f"{w_sign}${abs(week_pnl):,.0f}" if active_days_in_week > 0 else "$0"
+            html += f"<td class='summary-td'><div class='week-card'><div class='week-title'>Week {week_count}</div><div class='week-pnl {w_cls}'>{w_pnl_str}</div><div class='week-days'>{active_days_in_week} active days</div></div></td>"
+            week_count += 1
+        else: html += "<td class='summary-td'></td>"
+
         if idx < len(m_stats):
             html += f"<td class='summary-td'><div class='month-card'><div class='month-title'>{m_stats[idx]['title']}</div><div class='month-val'>{m_stats[idx]['val']}</div></div></td>"
         else: html += "<td class='summary-td'></td>"
