@@ -1,89 +1,100 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
+import calendar
 import plotly.graph_objects as go
+import plotly.express as px
 
+# ==========================================
+# 0. 樣式注入 (對齊您的個人化色調 #81C7D4)
+# ==========================================
+def inject_custom_css():
+    css = """
+    <style>
+        .stMetric { background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px; }
+        .stMetric:hover { border-color: #81C7D4; }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
+# ==========================================
+# 1. 資料處理核心 (改用名稱對應)
+# ==========================================
 def get_expectancy_data(xls):
-    """從 Excel 讀取並清洗期望值數據"""
     target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
-    if not target_sheet:
-        return None, "找不到名稱包含 '期望值' 的分頁"
+    if not target_sheet: return None, "找不到包含 '期望值' 的分頁"
     
     try:
-        # header=14 代表標題在第 15 列
+        # header=14 代表資料從 Excel 第 15 列開始抓取
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # 定義欄位映射 (左邊是 Excel 名稱，右邊是程式變數名)
+        # 定義您 Excel 中的新欄位名稱對照表
         mapping = {
             '日期': 'Date',
             '損益': 'PnL',
-            '標準R(盈虧比)': 'R',
-            '1R單位': 'Risk_Amount',
-            '期望值': 'Expectancy',
+            '標準R(盈虧比)': 'PnL_R',
+            '1R單位': 'Risk_Unit',
+            '期望值': 'Excel_EV',
             '累計損益': 'Cum_PnL'
         }
         
-        # 檢查必備欄位
+        # 只抓取存在的欄位並重新命名
         existing_cols = [col for col in mapping.keys() if col in df.columns]
-        df = df[existing_cols].copy()
-        df.rename(columns={k: v for k, v in mapping.items() if k in df.columns}, inplace=True)
-
-        # 清洗資料
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        for col in ['PnL', 'R', 'Risk_Amount', 'Expectancy', 'Cum_PnL']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce')
+        df_clean = df[existing_cols].copy()
+        df_clean.rename(columns={k: v for k, v in mapping.items() if k in df_clean.columns}, inplace=True)
         
-        # 移除日期或損益為空的無效行
-        df = df.dropna(subset=['Date', 'PnL']).sort_values('Date')
+        # 資料清理與轉型
+        df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
+        for col in ['PnL', 'PnL_R', 'Risk_Unit', 'Cum_PnL']:
+            if col in df_clean.columns:
+                df_clean[col] = pd.to_numeric(df_clean[col].astype(str).str.replace(',', ''), errors='coerce')
         
-        # 補全可能缺少的欄位 (確保 UI 不崩潰)
-        if 'R' not in df.columns:
-            df['R'] = df['PnL'] / df['Risk_Amount'].replace(0, 1)
-        if 'Expectancy' not in df.columns:
-            df['Expectancy'] = df['R'].expanding().mean()
+        df_clean = df_clean.dropna(subset=['Date', 'PnL']).sort_values('Date')
+        
+        # 若 Excel 中沒計算 Running EV，程式會自動根據 PnL_R 補算
+        if 'PnL_R' in df_clean.columns:
+            df_clean['Running_EV'] = df_clean['PnL_R'].expanding().mean()
             
-        return df, None
+        return df_clean, None
     except Exception as e:
-        return None, f"數據處理失敗: {str(e)}"
+        return None, f"Excel 讀取失敗: {e}"
 
-def show_expectancy_page(xls):
-    st.header("🧪 期望值實驗室 (R-Unit Based)")
-    
+# ==========================================
+# 2. 顯示主函數 (名稱對齊 app.py)
+# ==========================================
+def display_expectancy_lab(xls):
+    inject_custom_css()
     df, error = get_expectancy_data(xls)
+    
     if error:
         st.error(error)
         return
 
-    # 計算核心指標
+    st.header("🧪 期望值實驗室 (R-Unit Based)")
+    
+    # 指標計算
     total_trades = len(df)
-    avg_ev = df['R'].mean()
-    win_rate = (df['PnL'] > 0).sum() / total_trades
-    total_r = df['R'].sum()
+    current_ev = df['PnL_R'].mean() if 'PnL_R' in df.columns else 0
+    total_r = df['PnL_R'].sum() if 'PnL_R' in df.columns else 0
+    win_rate = (df['PnL'] > 0).mean()
 
-    # UI 指標卡
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("交易次數", f"{total_trades} 筆")
-    col2.metric("當前期望值", f"{avg_ev:.3f} R", delta=None)
-    col3.metric("累積獲利 R", f"{total_r:.2f} R")
-    col4.metric("勝率", f"{win_rate:.1%}")
+    # KPI 卡片
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("交易次數", f"{total_trades} 筆")
+    c2.metric("當前期望值", f"{current_ev:.3f} R")
+    c3.metric("累積獲利 (R)", f"{total_r:.2f} R")
+    c4.metric("勝率", f"{win_rate:.1%}")
 
-    # 1. 期望值動態趨勢圖
-    st.subheader("期望值變動曲線 (Running EV)")
-    fig_ev = px.line(df, x='Date', y='Expectancy', 
-                     title="策略穩定度趨勢 (應穩定在 0.2R 以上)",
-                     labels={'Expectancy': '期望值 (R)', 'Date': '日期'})
-    fig_ev.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig_ev.add_hline(y=avg_ev, line_color="red", annotation_text=f"目前平均: {avg_ev:.3f}")
-    st.plotly_chart(fig_ev, use_container_width=True)
+    # 期望值趨勢圖 (Running EV)
+    st.subheader("期望值變動趨勢 (應穩定 > 0.2R)")
+    if 'Running_EV' in df.columns:
+        fig_ev = px.line(df, x='Date', y='Running_EV', labels={'Running_EV': '期望值 (R)'})
+        fig_ev.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_ev.add_hline(y=current_ev, line_color="red", annotation_text=f"目前: {current_ev:.3f}")
+        st.plotly_chart(fig_ev, use_container_width=True)
 
-    # 2. 獲利累積曲線
-    st.subheader("累積損益曲線 (TWD)")
-    fig_pnl = px.area(df, x='Date', y='Cum_PnL', 
-                      title="帳戶資金成長曲線",
-                      labels={'Cum_PnL': '累積損益 (元)'})
-    st.plotly_chart(fig_pnl, use_container_width=True)
-
-    # 顯示原始資料表
-    with st.expander("查看底層數據 (最新 10 筆)"):
-        st.dataframe(df.tail(10), use_container_width=True)
+    # 資金成長圖
+    st.subheader("資金成長曲線 (累計損益)")
+    if 'Cum_PnL' in df.columns:
+        fig_pnl = px.area(df, x='Date', y='Cum_PnL', color_discrete_sequence=['#81C7D4'])
+        st.plotly_chart(fig_pnl, use_container_width=True)
