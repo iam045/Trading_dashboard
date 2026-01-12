@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import numpy as np
 
 # ==========================================
-# 0. 資料處理核心
+# 0. 資料處理核心 (修復為名稱對應)
 # ==========================================
 
 def get_advanced_data(xls):
@@ -14,9 +14,10 @@ def get_advanced_data(xls):
     if not target_sheet: return None, "找不到 '期望值' 分頁"
     
     try:
+        # header=14 代表從第 15 列開始抓取
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # 欄位映射表
+        # 欄位映射表：完全對齊您 Excel 的最新中文字標題
         mapping = {
             '日期': 'Date',
             '策略': 'Strategy',
@@ -26,6 +27,7 @@ def get_advanced_data(xls):
             '標準R(盈虧比)': 'R' 
         }
         
+        # 檢查與預設值處理
         for excel_col, target_col in mapping.items():
             if excel_col not in df.columns:
                 if target_col == 'Strategy': df[excel_col] = '未分類'
@@ -35,6 +37,7 @@ def get_advanced_data(xls):
         df_clean = df[[col for col in mapping.keys() if col in df.columns]].copy()
         df_clean.rename(columns=mapping, inplace=True)
 
+        # 數值轉型
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         for col in ['PnL', 'R', 'Risk_Amount']:
             if col in df_clean.columns:
@@ -56,7 +59,8 @@ def plot_pnl_distribution(df):
     """損益金額分佈圖 - 固定單位 2,000"""
     fig = go.Figure()
     abs_max = df['PnL'].abs().max()
-    bin_size = 2000 # 固定單位 2,000
+    bin_size = 2000 # 指定單位 2,000
+    # 邊界外推一個 bin_size，確保極端獲利（如 +4萬多）被包含在最後一個柱子內
     bin_end_limit = abs_max + bin_size 
 
     fig.add_trace(go.Histogram(
@@ -79,7 +83,7 @@ def plot_r_distribution(df):
     """R值分佈圖 - 固定單位 0.5 R"""
     fig = go.Figure()
     abs_max_r = df['R'].abs().max()
-    bin_size = 0.5 # 固定單位 0.5
+    bin_size = 0.5 # 指定單位 0.5
     bin_end_limit = abs_max_r + bin_size
 
     fig.add_trace(go.Histogram(
@@ -99,8 +103,9 @@ def plot_r_distribution(df):
     return fig
 
 def plot_symbol_ranking(df):
-    """顯示獲利與虧損 Top 5 的標的排行榜"""
+    """標的排行榜 (獲利與虧損 Top 5)"""
     symbol_stats = df.groupby('Symbol')['PnL'].sum().reset_index().sort_values('PnL', ascending=True)
+    # 取頭(虧損最慘 5)與尾(獲利最高 5)
     df_rank = pd.concat([symbol_stats.head(5), symbol_stats.tail(5)]).drop_duplicates().sort_values('PnL', ascending=True)
     colors = ['#ef5350' if x >= 0 else '#26a69a' for x in df_rank['PnL']]
     
@@ -111,7 +116,7 @@ def plot_symbol_ranking(df):
     fig.update_layout(title="標的損益排行榜 (獲利與虧損 Top 5)", height=450, margin=dict(l=100, t=40, b=40))
     return fig
 
-# --- 其他策略分析圖表 ---
+# --- 其餘分析圖表保持原設計 ---
 def plot_strategy_performance(df):
     stats = df.groupby('Strategy').agg(Total_PnL=('PnL', 'sum'), Count=('PnL', 'count'), Win_Count=('PnL', lambda x: (x > 0).sum())).reset_index()
     stats['Win_Rate'] = stats['Win_Count'] / stats['Count']
@@ -119,14 +124,14 @@ def plot_strategy_performance(df):
     fig = go.Figure()
     fig.add_trace(go.Bar(x=stats['Strategy'], y=stats['Total_PnL'], marker_color=['#ef5350' if x >= 0 else '#26a69a' for x in stats['Total_PnL']], text=stats['Total_PnL'].apply(lambda x: f"${x:,.0f}"), name='總損益'))
     fig.add_trace(go.Scatter(x=stats['Strategy'], y=stats['Win_Rate'], yaxis='y2', mode='lines+markers', name='勝率', line=dict(color='#333', width=2, dash='dot')))
-    fig.update_layout(title="策略總損益與勝率", yaxis2=dict(overlaying='y', side='right', tickformat='.0%'), showlegend=True, height=350)
+    fig.update_layout(title="策略總損益與勝率", yaxis2=dict(overlaying='y', side='right', tickformat='.0%'), height=350)
     return fig
 
 def plot_cumulative_pnl_by_strategy(df):
     df_sorted = df.sort_values('Date')
     df_sorted['CumPnL'] = df_sorted.groupby('Strategy')['PnL'].cumsum()
     fig = px.line(df_sorted, x='Date', y='CumPnL', color='Strategy', title="策略權益曲線")
-    fig.update_layout(height=350, margin=dict(t=40, b=20, l=20, r=20))
+    fig.update_layout(height=350)
     return fig
 
 def plot_strategy_quality_bubble(df):
@@ -166,6 +171,7 @@ def plot_weekday_analysis(df):
 
 @st.fragment
 def draw_strategy_section(df):
+    """策略分析獨立刷新區塊"""
     st.subheader("1️⃣ 策略效能深度檢閱")
     all_strategies = sorted(df['Strategy'].unique().tolist())
     selected_strategies = st.multiselect("🎯 篩選策略:", options=all_strategies, default=all_strategies)
@@ -178,31 +184,19 @@ def draw_strategy_section(df):
 
 @st.fragment
 def draw_distribution_section(df):
-    """獨立刷新區塊：分佈圖切換"""
+    """分佈圖獨立刷新區塊"""
     st.subheader("2️⃣ 整體損益分佈結構")
-    
-    # 切換開關
-    dist_mode = st.radio(
-        "📊 切換分佈模式:",
-        options=["損益金額 ($)", "R值單位 (R)"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-
+    dist_mode = st.radio("📊 切換分佈模式:", options=["損益金額 ($)", "R值單位 (R)"], horizontal=True, label_visibility="collapsed")
     wins = df[df['PnL'] > 0]['PnL']
     losses = df[df['PnL'] < 0]['PnL']
     m1, m2, m3 = st.columns(3)
     m1.metric("常態獲利 (中位數)", f"${wins.median():,.0f}")
     m2.metric("常態虧損 (中位數)", f"${losses.median():,.0f}")
     m3.metric("樣本總數", f"{len(df)} 筆")
-
     d1, d2 = st.columns(2)
     with d1: 
-        if dist_mode == "損益金額 ($)":
-            st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
-        else:
-            st.plotly_chart(plot_r_distribution(df), use_container_width=True)
-            
+        if dist_mode == "損益金額 ($)": st.plotly_chart(plot_pnl_distribution(df), use_container_width=True)
+        else: st.plotly_chart(plot_r_distribution(df), use_container_width=True)
     with d2: st.plotly_chart(plot_win_loss_box(df), use_container_width=True)
 
 # ==========================================
@@ -217,17 +211,14 @@ def display_advanced_analysis(xls):
 
     st.markdown("---")
     draw_strategy_section(df)
-    
     st.markdown("---")
-    draw_distribution_section(df) # 呼叫獨立刷新區塊
-
+    draw_distribution_section(df)
     st.markdown("---")
     st.subheader("3️⃣ 交易週期效應")
     f1, f2 = plot_weekday_analysis(df)
     dc1, dc2 = st.columns(2)
     with dc1: st.plotly_chart(f1, use_container_width=True)
     with dc2: st.plotly_chart(f2, use_container_width=True)
-    
     st.markdown("---")
     st.subheader("4️⃣ 標的損益排行榜")
     st.plotly_chart(plot_symbol_ranking(df), use_container_width=True)
