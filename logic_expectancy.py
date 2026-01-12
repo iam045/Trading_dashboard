@@ -149,7 +149,7 @@ def get_expectancy_data(xls):
             '策略': 'Strategy',
             '1R單位': 'Risk_Amount',
             '損益': 'PnL',
-            '損益R': 'R'
+            '標準R(盈虧比)': 'R'
         }
         
         # 僅抓取存在的標題並重新命名
