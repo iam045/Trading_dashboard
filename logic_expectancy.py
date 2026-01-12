@@ -137,13 +137,13 @@ def clean_numeric(series):
     return pd.to_numeric(series.astype(str).str.replace(',', '').str.strip(), errors='coerce')
 
 def get_expectancy_data(xls):
-    """讀取期望值分頁 (修復版：採用名稱對應避免 ILOC 崩潰)"""
+    """讀取期望值分頁"""
     target_sheet = next((name for name in xls.sheet_names if "期望值" in name), None)
     if not target_sheet: return None, "找不到含有 '期望值' 的分頁"
     try:
         df = pd.read_excel(xls, sheet_name=target_sheet, header=14)
         
-        # 定義 Excel 欄位名稱對應 (處理刪除欄位問題)
+        # 定義 Excel 欄位名稱對應
         mapping = {
             '日期': 'Date',
             '策略': 'Strategy',
@@ -152,15 +152,12 @@ def get_expectancy_data(xls):
             '標準R(盈虧比)': 'R'
         }
         
-        # 僅抓取存在的標題並重新命名
         existing_cols = [col for col in mapping.keys() if col in df.columns]
         df_clean = df[existing_cols].copy().rename(columns={k: v for k, v in mapping.items() if k in df.columns})
         
-        # 補全缺失欄位預設值
         if 'Strategy' not in df_clean.columns: df_clean['Strategy'] = 'Standard'
         if 'Date' in df_clean.columns: df_clean['Date'] = df_clean['Date'].ffill()
         
-        # 資料清理與轉型
         df_clean = df_clean.dropna(subset=['Date'])
         df_clean['Date'] = pd.to_datetime(df_clean['Date'], errors='coerce').dt.normalize()
         
@@ -168,9 +165,7 @@ def get_expectancy_data(xls):
             if col in df_clean.columns:
                 df_clean[col] = clean_numeric(df_clean[col])
         
-        # 移除關鍵數據缺失的行
         df_clean = df_clean.dropna(subset=['PnL', 'R'])
-        
         return df_clean.sort_values('Date'), None
     except Exception as e: return None, f"讀取期望值失敗: {e}"
 
@@ -186,7 +181,7 @@ def get_daily_report_data(xls):
         try:
             df = pd.read_excel(xls, sheet_name=sheet, header=4)
             if df.shape[1] < 8: continue 
-            df_cal = df.iloc[:, [0, 7]].copy() # 日期, 當日損益
+            df_cal = df.iloc[:, [0, 7]].copy()
             df_cal.columns = ['Date', 'DayPnL']
             df_cal['Date'] = pd.to_datetime(df_cal['Date'], errors='coerce').dt.normalize()
             df_cal = df_cal.dropna(subset=['Date'])
@@ -197,7 +192,6 @@ def get_daily_report_data(xls):
     return pd.concat(all_dfs, ignore_index=True).sort_values('Date'), None, ""
 
 def calculate_streaks(df):
-    """計算連勝與連敗"""
     pnl = df['PnL'].values
     max_win = max_loss = curr_win = curr_loss = 0
     for val in pnl:
@@ -206,26 +200,20 @@ def calculate_streaks(df):
     return max_win, max_loss
 
 def calculate_r_squared(df):
-    """計算權益曲線 R平方 (穩定度)"""
     if len(df) < 2: return 0
     y = df['R'].cumsum().values; x = np.arange(len(y))
     return (np.corrcoef(x, y)[0, 1]) ** 2
 
 def calculate_kpis(df):
-    """計算全域 KPI"""
     total = len(df); wins = df[df['PnL'] > 0]; losses = df[df['PnL'] <= 0]
     total_pnl = df['PnL'].sum(); win_rate = len(wins) / total if total > 0 else 0
     avg_win_r = df[df['R'] > 0]['R'].mean() if len(wins) > 0 else 0
     avg_loss_r = abs(df[df['R'] <= 0]['R'].mean()) if len(losses) > 0 else 1
     payoff_r = avg_win_r / avg_loss_r if avg_loss_r > 0 else 0
     pf = wins['PnL'].sum() / abs(losses['PnL'].sum()) if losses['PnL'].sum() != 0 else float('inf')
-    
-    # 期望值計算基準
     exp_r = df['R'].mean() 
-    
     max_win, max_loss = calculate_streaks(df); r_sq = calculate_r_squared(df)
     full_kelly = (win_rate - (1 - win_rate) / payoff_r) if payoff_r > 0 else 0
-    
     return {
         "Total PnL": total_pnl, "Total Trades": total, "Win Rate": win_rate,
         "Payoff Ratio": payoff_r, "Profit Factor": pf, "Expectancy": exp_r,
@@ -233,7 +221,6 @@ def calculate_kpis(df):
     }
 
 def calculate_trends(df):
-    """計算累積數據供圖表使用 (修正順序問題)"""
     df = df.reset_index(drop=True).copy()
     df['Running_EV'] = df['R'].expanding().mean()
     df['Running_PF'] = (df['PnL'].apply(lambda x: x if x > 0 else 0).cumsum() / 
@@ -242,7 +229,7 @@ def calculate_trends(df):
     return df.fillna(0)
 
 # ==========================================
-# 2. 繪圖與 UI 元件 (Fragments)
+# 2. 繪圖與 UI 元件
 # ==========================================
 
 def hex_to_rgba(hex_color, opacity=0.1):
@@ -251,17 +238,15 @@ def hex_to_rgba(hex_color, opacity=0.1):
     return f"rgba({r}, {g}, {b}, {opacity})"
 
 def get_sparkline(df_t, col_name, color):
-    """產生微型趨勢圖"""
     fill_color = hex_to_rgba(color, 0.1)
     df_show = df_t.tail(50) if len(df_t) > 50 else df_t
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_show['Date'], y=df_show[col_name], mode='lines', line=dict(color=color, width=2), fill='tozeroy', fillcolor=fill_color))
-    fig.update_layout(height=60, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(visible=False, fixedrange=True), yaxis=dict(visible=False, fixedrange=True), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, hovermode='x unified')
+    fig.update_layout(height=60, margin=dict(l=0, r=0, t=5, b=0), xaxis=dict(visible=False), yaxis=dict(visible=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
     return fig
 
 @st.fragment
 def draw_kpi_cards_with_charts(kpi, df_t):
-    """繪製 KPI 卡片列"""
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: st.metric("總損益", f"${kpi['Total PnL']:,.0f}"); st.write("")
     with c2: 
@@ -291,7 +276,7 @@ def draw_kelly_fragment(kpi):
     c_center = st.columns([1, 2, 2, 2, 2, 1]) 
     with c_center[1]: capital = st.number_input("目前本金", value=1000000, step=100000)
     with c_center[2]: 
-        # [修改] 新增 1/7 選項
+        # 選項補上 1/7
         kelly_frac = st.selectbox("凱利倍數", [1/4, 1/5, 1/6, 1/7, 1/8], index=1, format_func=lambda x: f"1/{int(1/x)} Kelly")
     adj_kelly = max(0, kpi.get('Full Kelly', 0) * kelly_frac)
     with c_center[3]: st.metric("建議倉位 %", f"{adj_kelly*100:.2f}%")
@@ -313,7 +298,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
     m_pnl = df_month['DayPnL'].sum()
 
     if not df_month.empty:
-        col_c1, col_c2 = st.columns(2)
+        col_c1, col_c2 = st.columns(2) # 此處定義了 col_c1, col_c2
         color = '#ef5350' if m_pnl >= 0 else '#26a69a'
         fig1 = go.Figure(go.Scatter(x=df_month['Date'], y=df_month['DayPnL'].cumsum(), mode='lines', line=dict(color=color, width=3), fill='tozeroy', fillcolor=hex_to_rgba(color, 0.2)))
         fig1.update_layout(title=dict(text="本月累積損益走勢", font=dict(size=14), x=0), height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
@@ -321,7 +306,7 @@ def draw_calendar_fragment(df_cal, theme_mode):
         
         fig2 = go.Figure(go.Bar(x=df_month['Date'], y=df_month['DayPnL'], marker_color=[('#ef5350' if v >= 0 else '#26a69a') for v in df_month['DayPnL']]))
         fig2.update_layout(title=dict(text="本月每日損益", font=dict(size=14), x=0), height=280, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
-        with col_chart2: st.plotly_chart(fig2, use_container_width=True)
+        with col_c2: st.plotly_chart(fig2, use_container_width=True) # 修正此處的變數名稱
 
     st.markdown(f"<h3 style='text-align: left !important; margin-bottom: 15px;'>{sel_period.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
     cal_obj = calendar.Calendar(firstweekday=6)
@@ -347,12 +332,10 @@ def draw_calendar_fragment(df_cal, theme_mode):
                 pnl_str = f"<div class='day-pnl'>{'+' if pnl>0 else '-'}${abs(pnl):,.0f}</div><div class='day-info'>Trade</div>" if pnl != 0 else "<div style='height: 20px;'></div>"
                 html += f"<td class='{td_cls}'><div class='day-num'>{day}</div>{pnl_str}</td>"
         
-        # [修改] 週結算 Summary 欄位顏色邏輯：正數為紅字，負數為綠字並帶負號
+        # 週結算 Summary：正數紅字(text-red)，負數綠字(text-green)並帶負號
         show_week_card = any(d != 0 for d in week)
         if show_week_card:
-            # 修改點：正損益紅字(text-red)，負損益綠字(text-green)
             w_cls = "text-red" if week_pnl >= 0 else "text-green"
-            # 修改點：加入符號顯示邏輯
             w_sign = "+" if week_pnl > 0 else "-" if week_pnl < 0 else ""
             w_pnl_str = f"{w_sign}${abs(week_pnl):,.0f}" if active_days_in_week > 0 else "$0"
             html += f"<td class='summary-td'><div class='week-card'><div class='week-title'>Week {week_count}</div><div class='week-pnl {w_cls}'>{w_pnl_str}</div><div class='week-days'>{active_days_in_week} active days</div></div></td>"
@@ -367,21 +350,14 @@ def draw_calendar_fragment(df_cal, theme_mode):
     html += "</tbody></table></div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# ==========================================
-# 4. 主程式進入點
-# ==========================================
-
 def display_expectancy_lab(xls):
     chart_theme = inject_custom_css()
     df_kpi, err_kpi = get_expectancy_data(xls)
     df_cal, _, _ = get_daily_report_data(xls)
-    
     if err_kpi: st.warning(f"KPI 讀取錯誤: {err_kpi}"); return
     if df_kpi is None or df_kpi.empty: st.info("無資料"); return
-
     kpi = calculate_kpis(df_kpi)
     df_trends = calculate_trends(df_kpi)
-    
     draw_kpi_cards_with_charts(kpi, df_trends)
     st.markdown("---")
     draw_kelly_fragment(kpi)
